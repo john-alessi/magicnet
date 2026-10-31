@@ -1,0 +1,38 @@
+{"type":"history","zone":"history","turn":1,"event":"CardChangeZone","card_id":"c13","card":"Plains","from":"Hand","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":1,"event":"LandPlayed","actor":"p0","card_id":"c13","card":"Plains"}
+{"type":"global","turn":1,"phase":"COMBAT_BEGIN","active_is_viewer":false,"stack_size":0}
+{"type":"player","id":"p1","side":"self","life":20,"lands_played":0}
+{"type":"game_object","zone":"self_hand","id":"c91","name":"Plains","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c85","name":"Gladecover Scout","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c115","name":"Armadillo Cloak","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c131","name":"Forest","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c120","name":"Utopia Sprawl","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c76","name":"Silhana Ledgewalker","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c101","name":"Lifelink","state":"Original"}
+{"type":"library_card","zone":"self_library","name":"Abundant Growth","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Ancestral Mask","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Armadillo Cloak","position":"unknown","count":3}
+{"type":"library_card","zone":"self_library","name":"Cartouche of Solidarity","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Commune with Spirits","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Ethereal Armor","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Forest","position":"unknown","count":8}
+{"type":"library_card","zone":"self_library","name":"Gladecover Scout","position":"unknown","count":3}
+{"type":"library_card","zone":"self_library","name":"Khalni Garden","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Malevolent Rumble","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Plains","position":"unknown","count":3}
+{"type":"library_card","zone":"self_library","name":"Rancor","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Sentinel's Eyes","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Shattered Landscape","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Silhana Ledgewalker","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Slippery Bogle","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Spirit Link","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Utopia Sprawl","position":"unknown","count":1}
+{"type":"player","id":"p0","side":"opp","life":20,"lands_played":1}
+{"type":"game_object","zone":"opp_battlefield","id":"c13","name":"Plains","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"opp_hand","id":"c41","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c3","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c42","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c9","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c5","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c50","name":"HIDDEN"}
+{"type":"library_card","zone":"opp_library","name":"HIDDEN","position":"unknown","count":53}

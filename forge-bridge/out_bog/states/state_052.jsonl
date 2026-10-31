@@ -1,0 +1,47 @@
+{"type":"history","zone":"history","turn":1,"event":"CardChangeZone","card_id":"c130","card":"Forest","from":"Hand","from_player":"p1","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":1,"event":"LandPlayed","actor":"p1","card_id":"c130","card":"Forest"}
+{"type":"history","zone":"history","turn":1,"event":"CardChangeZone","card_id":"c109","card":"Abundant Growth","from":"Hand","from_player":"p1","to":"Stack"}
+{"type":"history","zone":"history","turn":1,"event":"SpellAbilityCast","source_id":"c109","source":"Abundant Growth","ability":"Abundant Growth","targets":"[Forest (130)]"}
+{"type":"history","zone":"history","turn":1,"event":"CardAttachment","attachment_id":"c109","attachment":"Abundant Growth","to_id":"c130","to":"Forest"}
+{"type":"history","zone":"history","turn":1,"event":"CardChangeZone","card_id":"c109","card":"Abundant Growth","from":"Stack","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":1,"event":"SpellResolved","source_id":"c109","source":"Abundant Growth","ability":"Abundant Growth","fizzled":false}
+{"type":"history","zone":"history","turn":1,"event":"SpellAbilityCast","source_id":"c109","source":"Abundant Growth","ability":"When Abundant Growth enters, draw a card. [Zone Changer: Abundant Growth (109)]"}
+{"type":"global","turn":1,"phase":"MAIN1","active_is_viewer":false,"stack_size":1}
+{"type":"player","id":"p0","side":"self","life":20,"lands_played":0}
+{"type":"game_object","zone":"self_hand","id":"c31","name":"Abundant Growth","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c51","name":"Forest","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c41","name":"Armadillo Cloak","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c55","name":"Forest","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c47","name":"Shattered Landscape","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c17","name":"Slippery Bogle","state":"Original"}
+{"type":"library_card","zone":"self_library","id":"c32","name":"Abundant Growth","count":1,"position":"exact","depth_from_top":53,"depth_from_bottom":0}
+{"type":"library_card","zone":"self_library","name":"Abundant Growth","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Ancestral Mask","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Armadillo Cloak","position":"unknown","count":3}
+{"type":"library_card","zone":"self_library","name":"Cartouche of Solidarity","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Commune with Spirits","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Ethereal Armor","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Forest","position":"unknown","count":7}
+{"type":"library_card","zone":"self_library","name":"Gladecover Scout","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Khalni Garden","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Lifelink","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Malevolent Rumble","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Plains","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Rancor","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Sentinel's Eyes","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Shattered Landscape","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Silhana Ledgewalker","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Slippery Bogle","position":"unknown","count":3}
+{"type":"library_card","zone":"self_library","name":"Spirit Link","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Utopia Sprawl","position":"unknown","count":2}
+{"type":"player","id":"p1","side":"opp","life":20,"lands_played":1}
+{"type":"game_object","zone":"opp_battlefield","id":"c130","name":"Forest","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"opp_battlefield","id":"c109","name":"Abundant Growth","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false,"edges":[{"rel":"attached_to","to":"c130"}]}
+{"type":"game_object","zone":"opp_hand","id":"c85","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c123","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c83","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c127","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c86","name":"HIDDEN"}
+{"type":"library_card","zone":"opp_library","name":"HIDDEN","position":"unknown","count":53}
+{"type":"stack_item","zone":"stack","id":"s107","is_spell":false,"is_trigger":true,"source":"Abundant Growth","edges":[{"rel":"source_is","to":"c109"}]}
+{"type":"action","zone":"actions","api":"Draw","source":"Shattered Landscape","edges":[{"rel":"source_is","to":"c47"}]}

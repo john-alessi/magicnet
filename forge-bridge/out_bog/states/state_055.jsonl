@@ -1,0 +1,66 @@
+{"type":"history","zone":"history","turn":1,"event":"CardChangeZone","card_id":"c130","card":"Forest","from":"Hand","from_player":"p1","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":1,"event":"LandPlayed","actor":"p1","card_id":"c130","card":"Forest"}
+{"type":"history","zone":"history","turn":1,"event":"CardChangeZone","card_id":"c109","card":"Abundant Growth","from":"Hand","from_player":"p1","to":"Stack"}
+{"type":"history","zone":"history","turn":1,"event":"SpellAbilityCast","source_id":"c109","source":"Abundant Growth","ability":"Abundant Growth","targets":"[Forest (130)]"}
+{"type":"history","zone":"history","turn":1,"event":"CardAttachment","attachment_id":"c109","attachment":"Abundant Growth","to_id":"c130","to":"Forest"}
+{"type":"history","zone":"history","turn":1,"event":"CardChangeZone","card_id":"c109","card":"Abundant Growth","from":"Stack","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":1,"event":"SpellResolved","source_id":"c109","source":"Abundant Growth","ability":"Abundant Growth","fizzled":false}
+{"type":"history","zone":"history","turn":1,"event":"SpellAbilityCast","source_id":"c109","source":"Abundant Growth","ability":"When Abundant Growth enters, draw a card. [Zone Changer: Abundant Growth (109)]"}
+{"type":"history","zone":"history","turn":1,"event":"CardChangeZone","card_id":"c115","card":"<hidden>","from":"Library","from_player":"p1","to":"Hand","to_player":"p1"}
+{"type":"history","zone":"history","turn":1,"event":"SpellResolved","source_id":"c109","source":"Abundant Growth","ability":"When Abundant Growth enters, draw a card. [Zone Changer: Abundant Growth (109)]","fizzled":false}
+{"type":"history","zone":"history","turn":1,"event":"AttackersDeclared","actor":"p1","count":0}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c8","card":"Sentinel's Eyes","from":"Library","from_player":"p0","to":"Hand","to_player":"p0"}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c51","card":"Forest","from":"Hand","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":2,"event":"LandPlayed","actor":"p0","card_id":"c51","card":"Forest"}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c31","card":"Abundant Growth","from":"Hand","from_player":"p0","to":"Stack"}
+{"type":"history","zone":"history","turn":2,"event":"SpellAbilityCast","source_id":"c31","source":"Abundant Growth","ability":"Abundant Growth","targets":"[Forest (51)]"}
+{"type":"history","zone":"history","turn":2,"event":"CardAttachment","attachment_id":"c31","attachment":"Abundant Growth","to_id":"c51","to":"Forest"}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c31","card":"Abundant Growth","from":"Stack","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":2,"event":"SpellResolved","source_id":"c31","source":"Abundant Growth","ability":"Abundant Growth","fizzled":false}
+{"type":"history","zone":"history","turn":2,"event":"SpellAbilityCast","source_id":"c31","source":"Abundant Growth","ability":"When Abundant Growth enters, draw a card. [Zone Changer: Abundant Growth (31)]"}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c42","card":"Commune with Spirits","from":"Library","from_player":"p0","to":"Hand","to_player":"p0"}
+{"type":"history","zone":"history","turn":2,"event":"SpellResolved","source_id":"c31","source":"Abundant Growth","ability":"When Abundant Growth enters, draw a card. [Zone Changer: Abundant Growth (31)]","fizzled":false}
+{"type":"history","zone":"history","turn":2,"event":"AttackersDeclared","actor":"p0","count":0}
+{"type":"global","turn":3,"phase":"UPKEEP","active_is_viewer":false,"stack_size":0}
+{"type":"player","id":"p0","side":"self","life":20,"lands_played":0}
+{"type":"game_object","zone":"self_battlefield","id":"c51","name":"Forest","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"self_battlefield","id":"c31","name":"Abundant Growth","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false,"edges":[{"rel":"attached_to","to":"c51"}]}
+{"type":"game_object","zone":"self_hand","id":"c41","name":"Armadillo Cloak","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c55","name":"Forest","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c47","name":"Shattered Landscape","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c17","name":"Slippery Bogle","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c8","name":"Sentinel's Eyes","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c42","name":"Commune with Spirits","state":"Original"}
+{"type":"library_card","zone":"self_library","id":"c32","name":"Abundant Growth","count":1,"position":"exact","depth_from_top":51,"depth_from_bottom":0}
+{"type":"library_card","zone":"self_library","name":"Abundant Growth","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Ancestral Mask","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Armadillo Cloak","position":"unknown","count":3}
+{"type":"library_card","zone":"self_library","name":"Cartouche of Solidarity","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Commune with Spirits","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Ethereal Armor","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Forest","position":"unknown","count":7}
+{"type":"library_card","zone":"self_library","name":"Gladecover Scout","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Khalni Garden","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Lifelink","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Malevolent Rumble","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Plains","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Rancor","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Sentinel's Eyes","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Shattered Landscape","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Silhana Ledgewalker","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Slippery Bogle","position":"unknown","count":3}
+{"type":"library_card","zone":"self_library","name":"Spirit Link","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Utopia Sprawl","position":"unknown","count":2}
+{"type":"player","id":"p1","side":"opp","life":20,"lands_played":0}
+{"type":"game_object","zone":"opp_battlefield","id":"c130","name":"Forest","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"opp_battlefield","id":"c109","name":"Abundant Growth","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false,"edges":[{"rel":"attached_to","to":"c130"}]}
+{"type":"game_object","zone":"opp_hand","id":"c85","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c123","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c83","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c127","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c86","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c115","name":"HIDDEN"}
+{"type":"library_card","zone":"opp_library","name":"HIDDEN","position":"unknown","count":52}
+{"type":"action","zone":"actions","api":"Draw","source":"Shattered Landscape","edges":[{"rel":"source_is","to":"c47"}]}
+{"type":"action","zone":"actions","api":"Mana","source":"Forest","edges":[{"rel":"source_is","to":"c51"}]}
+{"type":"action","zone":"actions","api":"Mana","source":"Forest","edges":[{"rel":"source_is","to":"c51"}]}

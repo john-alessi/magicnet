@@ -1,0 +1,220 @@
+{"type":"history","zone":"history","turn":1,"event":"CardChangeZone","card_id":"c15","card":"Plains","from":"Hand","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":1,"event":"LandPlayed","actor":"p0","card_id":"c15","card":"Plains"}
+{"type":"history","zone":"history","turn":1,"event":"AttackersDeclared","actor":"p0","count":0}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c94","card":"Slippery Bogle","from":"Library","from_player":"p1","to":"Hand","to_player":"p1"}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c128","card":"Forest","from":"Hand","from_player":"p1","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":2,"event":"LandPlayed","actor":"p1","card_id":"c128","card":"Forest"}
+{"type":"history","zone":"history","turn":2,"event":"AttackersDeclared","actor":"p1","count":0}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c92","card":"Slippery Bogle","from":"Hand","from_player":"p1","to":"Stack"}
+{"type":"history","zone":"history","turn":2,"event":"SpellAbilityCast","source_id":"c92","source":"Slippery Bogle","ability":"Slippery Bogle - Creature 1 / 1"}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c92","card":"Slippery Bogle","from":"Stack","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":2,"event":"SpellResolved","source_id":"c92","source":"Slippery Bogle","ability":"Slippery Bogle - Creature 1 / 1","fizzled":false}
+{"type":"history","zone":"history","turn":3,"event":"CardChangeZone","card_id":"c21","card":"<hidden>","from":"Library","from_player":"p0","to":"Hand","to_player":"p0"}
+{"type":"history","zone":"history","turn":3,"event":"CardChangeZone","card_id":"c46","card":"Shattered Landscape","from":"Hand","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":3,"event":"LandPlayed","actor":"p0","card_id":"c46","card":"Shattered Landscape"}
+{"type":"history","zone":"history","turn":3,"event":"CardSacrificed","card_id":"c46","card":"Shattered Landscape"}
+{"type":"history","zone":"history","turn":3,"event":"CardChangeZone","card_id":"c46","card":"Shattered Landscape","from":"Battlefield","from_player":"p0","to":"Graveyard","to_player":"p0"}
+{"type":"history","zone":"history","turn":3,"event":"SpellAbilityCast","source_id":"c46","source":"Shattered Landscape","ability":"{T}, Sacrifice Shattered Landscape: Search your library for a basic Mountain, Plains, or Swamp card, put it onto the battlefield tapped, then shuffle."}
+{"type":"history","zone":"history","turn":3,"event":"CardChangeZone","card_id":"c14","card":"Plains","from":"Library","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":3,"event":"SpellResolved","source_id":"c46","source":"Shattered Landscape","ability":"{T}, Sacrifice Shattered Landscape: Search your library for a basic Mountain, Plains, or Swamp card, put it onto the battlefield tapped, then shuffle.","fizzled":false}
+{"type":"history","zone":"history","turn":3,"event":"AttackersDeclared","actor":"p0","count":0}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c90","card":"Plains","from":"Library","from_player":"p1","to":"Hand","to_player":"p1"}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c121","card":"Shattered Landscape","from":"Hand","from_player":"p1","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":4,"event":"LandPlayed","actor":"p1","card_id":"c121","card":"Shattered Landscape"}
+{"type":"history","zone":"history","turn":4,"event":"CardSacrificed","card_id":"c121","card":"Shattered Landscape"}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c121","card":"Shattered Landscape","from":"Battlefield","from_player":"p1","to":"Graveyard","to_player":"p1"}
+{"type":"history","zone":"history","turn":4,"event":"SpellAbilityCast","source_id":"c121","source":"Shattered Landscape","ability":"{T}, Sacrifice Shattered Landscape: Search your library for a basic Mountain, Plains, or Swamp card, put it onto the battlefield tapped, then shuffle."}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c89","card":"Plains","from":"Library","from_player":"p1","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":4,"event":"SpellResolved","source_id":"c121","source":"Shattered Landscape","ability":"{T}, Sacrifice Shattered Landscape: Search your library for a basic Mountain, Plains, or Swamp card, put it onto the battlefield tapped, then shuffle.","fizzled":false}
+{"type":"history","zone":"history","turn":4,"event":"AttackersDeclared","actor":"p1","count":1,"edges":[{"rel":"attacks","to":"c92"},{"rel":"defender","to":"p0"}]}
+{"type":"history","zone":"history","turn":4,"event":"BlockersDeclared","actor":"p0","blocks_count":0,"unblocked_count":1,"edges":[{"rel":"unblocked","to":"c92"}]}
+{"type":"history","zone":"history","turn":4,"event":"PlayerDamaged","target":"p0","source_id":"c92","source":"Slippery Bogle","amount":1,"combat":true,"infect":false}
+{"type":"history","zone":"history","turn":4,"event":"PlayerLivesChanged","target":"p0","from":20,"to":19}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c94","card":"Slippery Bogle","from":"Hand","from_player":"p1","to":"Stack"}
+{"type":"history","zone":"history","turn":4,"event":"SpellAbilityCast","source_id":"c94","source":"Slippery Bogle","ability":"Slippery Bogle - Creature 1 / 1"}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c94","card":"Slippery Bogle","from":"Stack","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":4,"event":"SpellResolved","source_id":"c94","source":"Slippery Bogle","ability":"Slippery Bogle - Creature 1 / 1","fizzled":false}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c43","card":"<hidden>","from":"Library","from_player":"p0","to":"Hand","to_player":"p0"}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c53","card":"Forest","from":"Hand","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":5,"event":"LandPlayed","actor":"p0","card_id":"c53","card":"Forest"}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c34","card":"Abundant Growth","from":"Hand","from_player":"p0","to":"Stack"}
+{"type":"history","zone":"history","turn":5,"event":"SpellAbilityCast","source_id":"c34","source":"Abundant Growth","ability":"Abundant Growth","targets":"[Plains (15)]"}
+{"type":"history","zone":"history","turn":5,"event":"CardAttachment","attachment_id":"c34","attachment":"Abundant Growth","to_id":"c15","to":"Plains"}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c34","card":"Abundant Growth","from":"Stack","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":5,"event":"SpellResolved","source_id":"c34","source":"Abundant Growth","ability":"Abundant Growth","fizzled":false}
+{"type":"history","zone":"history","turn":5,"event":"SpellAbilityCast","source_id":"c34","source":"Abundant Growth","ability":"When Abundant Growth enters, draw a card. [Zone Changer: Abundant Growth (34)]"}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c47","card":"<hidden>","from":"Library","from_player":"p0","to":"Hand","to_player":"p0"}
+{"type":"history","zone":"history","turn":5,"event":"SpellResolved","source_id":"c34","source":"Abundant Growth","ability":"When Abundant Growth enters, draw a card. [Zone Changer: Abundant Growth (34)]","fizzled":false}
+{"type":"history","zone":"history","turn":5,"event":"AttackersDeclared","actor":"p0","count":0}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c12","card":"Gladecover Scout","from":"Hand","from_player":"p0","to":"Stack"}
+{"type":"history","zone":"history","turn":5,"event":"SpellAbilityCast","source_id":"c12","source":"Gladecover Scout","ability":"Gladecover Scout - Creature 1 / 1"}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c12","card":"Gladecover Scout","from":"Stack","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":5,"event":"SpellResolved","source_id":"c12","source":"Gladecover Scout","ability":"Gladecover Scout - Creature 1 / 1","fizzled":false}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c35","card":"Spirit Link","from":"Hand","from_player":"p0","to":"Stack"}
+{"type":"history","zone":"history","turn":5,"event":"SpellAbilityCast","source_id":"c35","source":"Spirit Link","ability":"Spirit Link","targets":"[Gladecover Scout (12)]"}
+{"type":"history","zone":"history","turn":5,"event":"CardAttachment","attachment_id":"c35","attachment":"Spirit Link","to_id":"c12","to":"Gladecover Scout"}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c35","card":"Spirit Link","from":"Stack","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":5,"event":"SpellResolved","source_id":"c35","source":"Spirit Link","ability":"Spirit Link","fizzled":false}
+{"type":"history","zone":"history","turn":6,"event":"CardChangeZone","card_id":"c122","card":"Shattered Landscape","from":"Library","from_player":"p1","to":"Hand","to_player":"p1"}
+{"type":"history","zone":"history","turn":6,"event":"CardChangeZone","card_id":"c122","card":"Shattered Landscape","from":"Hand","from_player":"p1","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":6,"event":"LandPlayed","actor":"p1","card_id":"c122","card":"Shattered Landscape"}
+{"type":"history","zone":"history","turn":6,"event":"CardSacrificed","card_id":"c122","card":"Shattered Landscape"}
+{"type":"history","zone":"history","turn":6,"event":"CardChangeZone","card_id":"c122","card":"Shattered Landscape","from":"Battlefield","from_player":"p1","to":"Graveyard","to_player":"p1"}
+{"type":"history","zone":"history","turn":6,"event":"SpellAbilityCast","source_id":"c122","source":"Shattered Landscape","ability":"{T}, Sacrifice Shattered Landscape: Search your library for a basic Mountain, Plains, or Swamp card, put it onto the battlefield tapped, then shuffle."}
+{"type":"history","zone":"history","turn":6,"event":"CardChangeZone","card_id":"c91","card":"Plains","from":"Library","from_player":"p1","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":6,"event":"SpellResolved","source_id":"c122","source":"Shattered Landscape","ability":"{T}, Sacrifice Shattered Landscape: Search your library for a basic Mountain, Plains, or Swamp card, put it onto the battlefield tapped, then shuffle.","fizzled":false}
+{"type":"history","zone":"history","turn":6,"event":"CardChangeZone","card_id":"c110","card":"Spirit Link","from":"Hand","from_player":"p1","to":"Stack"}
+{"type":"history","zone":"history","turn":6,"event":"SpellAbilityCast","source_id":"c110","source":"Spirit Link","ability":"Spirit Link","targets":"[Slippery Bogle (92)]"}
+{"type":"history","zone":"history","turn":6,"event":"CardAttachment","attachment_id":"c110","attachment":"Spirit Link","to_id":"c92","to":"Slippery Bogle"}
+{"type":"history","zone":"history","turn":6,"event":"CardChangeZone","card_id":"c110","card":"Spirit Link","from":"Stack","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":6,"event":"SpellResolved","source_id":"c110","source":"Spirit Link","ability":"Spirit Link","fizzled":false}
+{"type":"history","zone":"history","turn":6,"event":"AttackersDeclared","actor":"p1","count":2,"edges":[{"rel":"attacks","to":"c92"},{"rel":"defender","to":"p0"},{"rel":"attacks","to":"c94"},{"rel":"defender","to":"p0"}]}
+{"type":"history","zone":"history","turn":6,"event":"BlockersDeclared","actor":"p0","blocks_count":0,"unblocked_count":2,"edges":[{"rel":"unblocked","to":"c92"},{"rel":"unblocked","to":"c94"}]}
+{"type":"history","zone":"history","turn":6,"event":"PlayerDamaged","target":"p0","source_id":"c92","source":"Slippery Bogle","amount":1,"combat":true,"infect":false}
+{"type":"history","zone":"history","turn":6,"event":"PlayerDamaged","target":"p0","source_id":"c94","source":"Slippery Bogle","amount":1,"combat":true,"infect":false}
+{"type":"history","zone":"history","turn":6,"event":"PlayerLivesChanged","target":"p0","from":19,"to":17}
+{"type":"history","zone":"history","turn":6,"event":"SpellAbilityCast","source_id":"c110","source":"Spirit Link","ability":"Whenever enchanted creature deals damage, you gain that much life. [Damage Source: Slippery Bogle (92), Damaged: [P0-[Pauper] #19 - Bogles], Amount: 1]"}
+{"type":"history","zone":"history","turn":6,"event":"PlayerLivesChanged","target":"p1","from":20,"to":21}
+{"type":"history","zone":"history","turn":6,"event":"SpellResolved","source_id":"c110","source":"Spirit Link","ability":"Whenever enchanted creature deals damage, you gain that much life. [Damage Source: Slippery Bogle (92), Damaged: [P0-[Pauper] #19 - Bogles], Amount: 1]","fizzled":false}
+{"type":"history","zone":"history","turn":7,"event":"CardChangeZone","card_id":"c17","card":"<hidden>","from":"Library","from_player":"p0","to":"Hand","to_player":"p0"}
+{"type":"history","zone":"history","turn":7,"event":"CardChangeZone","card_id":"c47","card":"Shattered Landscape","from":"Hand","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":7,"event":"LandPlayed","actor":"p0","card_id":"c47","card":"Shattered Landscape"}
+{"type":"history","zone":"history","turn":7,"event":"CardSacrificed","card_id":"c47","card":"Shattered Landscape"}
+{"type":"history","zone":"history","turn":7,"event":"CardChangeZone","card_id":"c47","card":"Shattered Landscape","from":"Battlefield","from_player":"p0","to":"Graveyard","to_player":"p0"}
+{"type":"history","zone":"history","turn":7,"event":"SpellAbilityCast","source_id":"c47","source":"Shattered Landscape","ability":"{T}, Sacrifice Shattered Landscape: Search your library for a basic Mountain, Plains, or Swamp card, put it onto the battlefield tapped, then shuffle."}
+{"type":"history","zone":"history","turn":7,"event":"CardChangeZone","card_id":"c16","card":"Plains","from":"Library","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":7,"event":"SpellResolved","source_id":"c47","source":"Shattered Landscape","ability":"{T}, Sacrifice Shattered Landscape: Search your library for a basic Mountain, Plains, or Swamp card, put it onto the battlefield tapped, then shuffle.","fizzled":false}
+{"type":"history","zone":"history","turn":7,"event":"CardChangeZone","card_id":"c58","card":"Ancestral Mask","from":"Hand","from_player":"p0","to":"Stack"}
+{"type":"history","zone":"history","turn":7,"event":"SpellAbilityCast","source_id":"c58","source":"Ancestral Mask","ability":"Ancestral Mask","targets":"[Gladecover Scout (12)]"}
+{"type":"history","zone":"history","turn":7,"event":"CardAttachment","attachment_id":"c58","attachment":"Ancestral Mask","to_id":"c12","to":"Gladecover Scout"}
+{"type":"history","zone":"history","turn":7,"event":"CardChangeZone","card_id":"c58","card":"Ancestral Mask","from":"Stack","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":7,"event":"SpellResolved","source_id":"c58","source":"Ancestral Mask","ability":"Ancestral Mask","fizzled":false}
+{"type":"history","zone":"history","turn":7,"event":"AttackersDeclared","actor":"p0","count":1,"edges":[{"rel":"attacks","to":"c12"},{"rel":"defender","to":"p1"}]}
+{"type":"history","zone":"history","turn":7,"event":"BlockersDeclared","actor":"p1","blocks_count":0,"unblocked_count":1,"edges":[{"rel":"unblocked","to":"c12"}]}
+{"type":"history","zone":"history","turn":7,"event":"PlayerDamaged","target":"p1","source_id":"c12","source":"Gladecover Scout","amount":7,"combat":true,"infect":false}
+{"type":"history","zone":"history","turn":7,"event":"PlayerLivesChanged","target":"p1","from":21,"to":14}
+{"type":"history","zone":"history","turn":7,"event":"SpellAbilityCast","source_id":"c35","source":"Spirit Link","ability":"Whenever enchanted creature deals damage, you gain that much life. [Damage Source: Gladecover Scout (12), Damaged: [P1-[Pauper] #19 - Bogles], Amount: 7]"}
+{"type":"history","zone":"history","turn":7,"event":"PlayerLivesChanged","target":"p0","from":17,"to":24}
+{"type":"history","zone":"history","turn":7,"event":"SpellResolved","source_id":"c35","source":"Spirit Link","ability":"Whenever enchanted creature deals damage, you gain that much life. [Damage Source: Gladecover Scout (12), Damaged: [P1-[Pauper] #19 - Bogles], Amount: 7]","fizzled":false}
+{"type":"history","zone":"history","turn":8,"event":"CardChangeZone","card_id":"c109","card":"Abundant Growth","from":"Library","from_player":"p1","to":"Hand","to_player":"p1"}
+{"type":"history","zone":"history","turn":8,"event":"CardChangeZone","card_id":"c130","card":"Forest","from":"Hand","from_player":"p1","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":8,"event":"LandPlayed","actor":"p1","card_id":"c130","card":"Forest"}
+{"type":"history","zone":"history","turn":8,"event":"CardChangeZone","card_id":"c82","card":"Sentinel's Eyes","from":"Hand","from_player":"p1","to":"Stack"}
+{"type":"history","zone":"history","turn":8,"event":"SpellAbilityCast","source_id":"c82","source":"Sentinel's Eyes","ability":"Sentinel's Eyes","targets":"[Slippery Bogle (92)]"}
+{"type":"history","zone":"history","turn":8,"event":"CardAttachment","attachment_id":"c82","attachment":"Sentinel's Eyes","to_id":"c92","to":"Slippery Bogle"}
+{"type":"history","zone":"history","turn":8,"event":"CardChangeZone","card_id":"c82","card":"Sentinel's Eyes","from":"Stack","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":8,"event":"SpellResolved","source_id":"c82","source":"Sentinel's Eyes","ability":"Sentinel's Eyes","fizzled":false}
+{"type":"history","zone":"history","turn":8,"event":"CardChangeZone","card_id":"c109","card":"Abundant Growth","from":"Hand","from_player":"p1","to":"Stack"}
+{"type":"history","zone":"history","turn":8,"event":"SpellAbilityCast","source_id":"c109","source":"Abundant Growth","ability":"Abundant Growth","targets":"[Forest (128)]"}
+{"type":"history","zone":"history","turn":8,"event":"CardAttachment","attachment_id":"c109","attachment":"Abundant Growth","to_id":"c128","to":"Forest"}
+{"type":"history","zone":"history","turn":8,"event":"CardChangeZone","card_id":"c109","card":"Abundant Growth","from":"Stack","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":8,"event":"SpellResolved","source_id":"c109","source":"Abundant Growth","ability":"Abundant Growth","fizzled":false}
+{"type":"history","zone":"history","turn":8,"event":"SpellAbilityCast","source_id":"c109","source":"Abundant Growth","ability":"When Abundant Growth enters, draw a card. [Zone Changer: Abundant Growth (109)]"}
+{"type":"history","zone":"history","turn":8,"event":"CardChangeZone","card_id":"c119","card":"Utopia Sprawl","from":"Library","from_player":"p1","to":"Hand","to_player":"p1"}
+{"type":"history","zone":"history","turn":8,"event":"SpellResolved","source_id":"c109","source":"Abundant Growth","ability":"When Abundant Growth enters, draw a card. [Zone Changer: Abundant Growth (109)]","fizzled":false}
+{"type":"history","zone":"history","turn":8,"event":"AttackersDeclared","actor":"p1","count":2,"edges":[{"rel":"attacks","to":"c94"},{"rel":"defender","to":"p0"},{"rel":"attacks","to":"c92"},{"rel":"defender","to":"p0"}]}
+{"type":"history","zone":"history","turn":8,"event":"BlockersDeclared","actor":"p0","blocks_count":0,"unblocked_count":2,"edges":[{"rel":"unblocked","to":"c94"},{"rel":"unblocked","to":"c92"}]}
+{"type":"history","zone":"history","turn":8,"event":"PlayerDamaged","target":"p0","source_id":"c94","source":"Slippery Bogle","amount":1,"combat":true,"infect":false}
+{"type":"history","zone":"history","turn":8,"event":"PlayerDamaged","target":"p0","source_id":"c92","source":"Slippery Bogle","amount":2,"combat":true,"infect":false}
+{"type":"history","zone":"history","turn":8,"event":"PlayerLivesChanged","target":"p0","from":24,"to":21}
+{"type":"history","zone":"history","turn":8,"event":"SpellAbilityCast","source_id":"c110","source":"Spirit Link","ability":"Whenever enchanted creature deals damage, you gain that much life. [Damage Source: Slippery Bogle (92), Damaged: [P0-[Pauper] #19 - Bogles], Amount: 2]"}
+{"type":"history","zone":"history","turn":8,"event":"PlayerLivesChanged","target":"p1","from":14,"to":16}
+{"type":"history","zone":"history","turn":8,"event":"SpellResolved","source_id":"c110","source":"Spirit Link","ability":"Whenever enchanted creature deals damage, you gain that much life. [Damage Source: Slippery Bogle (92), Damaged: [P0-[Pauper] #19 - Bogles], Amount: 2]","fizzled":false}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c56","card":"<hidden>","from":"Library","from_player":"p0","to":"Hand","to_player":"p0"}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c56","card":"Forest","from":"Hand","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":9,"event":"LandPlayed","actor":"p0","card_id":"c56","card":"Forest"}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c21","card":"Cartouche of Solidarity","from":"Hand","from_player":"p0","to":"Stack"}
+{"type":"history","zone":"history","turn":9,"event":"SpellAbilityCast","source_id":"c21","source":"Cartouche of Solidarity","ability":"Cartouche of Solidarity","targets":"[Gladecover Scout (12)]"}
+{"type":"history","zone":"history","turn":9,"event":"CardAttachment","attachment_id":"c21","attachment":"Cartouche of Solidarity","to_id":"c12","to":"Gladecover Scout"}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c21","card":"Cartouche of Solidarity","from":"Stack","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":9,"event":"SpellResolved","source_id":"c21","source":"Cartouche of Solidarity","ability":"Cartouche of Solidarity","fizzled":false}
+{"type":"history","zone":"history","turn":9,"event":"SpellAbilityCast","source_id":"c21","source":"Cartouche of Solidarity","ability":"When Cartouche of Solidarity enters, create a 1/1 white Warrior creature token with vigilance. [Zone Changer: Cartouche of Solidarity (21)]"}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c157","card":"Warrior Token","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":9,"event":"TokenCreated"}
+{"type":"history","zone":"history","turn":9,"event":"SpellResolved","source_id":"c21","source":"Cartouche of Solidarity","ability":"When Cartouche of Solidarity enters, create a 1/1 white Warrior creature token with vigilance. [Zone Changer: Cartouche of Solidarity (21)]","fizzled":false}
+{"type":"history","zone":"history","turn":9,"event":"AttackersDeclared","actor":"p0","count":1,"edges":[{"rel":"attacks","to":"c12"},{"rel":"defender","to":"p1"}]}
+{"type":"history","zone":"history","turn":9,"event":"BlockersDeclared","actor":"p1","blocks_count":1,"unblocked_count":0,"edges":[{"rel":"blocks","to":"c92"},{"rel":"blocked","to":"c12"}]}
+{"type":"history","zone":"history","turn":9,"event":"CardDamaged","card_id":"c92","card":"Slippery Bogle","source_id":"c12","source":"Gladecover Scout","amount":14,"damage_type":"Normal"}
+{"type":"history","zone":"history","turn":9,"event":"CardDestroyed"}
+{"type":"history","zone":"history","turn":9,"event":"CardAttachment","attachment_id":"c110","attachment":"Spirit Link","from_id":"c92","from":""}
+{"type":"history","zone":"history","turn":9,"event":"CardAttachment","attachment_id":"c82","attachment":"Sentinel's Eyes","from_id":"c92","from":""}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c92","card":"Slippery Bogle","from":"Battlefield","from_player":"p1","to":"Graveyard","to_player":"p1"}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c110","card":"Spirit Link","from":"Battlefield","from_player":"p1","to":"Graveyard","to_player":"p1"}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c82","card":"Sentinel's Eyes","from":"Battlefield","from_player":"p1","to":"Graveyard","to_player":"p1"}
+{"type":"history","zone":"history","turn":9,"event":"SpellAbilityCast","source_id":"c35","source":"Spirit Link","ability":"Whenever enchanted creature deals damage, you gain that much life. [Damage Source: Gladecover Scout (12), Damaged: [Slippery Bogle (92)], Amount: 14]"}
+{"type":"history","zone":"history","turn":9,"event":"PlayerLivesChanged","target":"p0","from":21,"to":35}
+{"type":"history","zone":"history","turn":9,"event":"SpellResolved","source_id":"c35","source":"Spirit Link","ability":"Whenever enchanted creature deals damage, you gain that much life. [Damage Source: Gladecover Scout (12), Damaged: [Slippery Bogle (92)], Amount: 14]","fizzled":false}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c17","card":"Slippery Bogle","from":"Hand","from_player":"p0","to":"Stack"}
+{"type":"history","zone":"history","turn":9,"event":"SpellAbilityCast","source_id":"c17","source":"Slippery Bogle","ability":"Slippery Bogle - Creature 1 / 1"}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c17","card":"Slippery Bogle","from":"Stack","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":9,"event":"SpellResolved","source_id":"c17","source":"Slippery Bogle","ability":"Slippery Bogle - Creature 1 / 1","fizzled":false}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c43","card":"Commune with Spirits","from":"Hand","from_player":"p0","to":"Stack"}
+{"type":"history","zone":"history","turn":9,"event":"SpellAbilityCast","source_id":"c43","source":"Commune with Spirits","ability":"Look at the top four cards of your library. You may reveal an enchantment or land card from among them and put it into your hand. Put the rest on the bottom of your library in a random order."}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c39","card":"<hidden>","from":"Library","from_player":"p0","to":"Hand","to_player":"p0"}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c28","card":"<hidden>","from":"Library","from_player":"p0","to":"Library","to_player":"p0"}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c22","card":"<hidden>","from":"Library","from_player":"p0","to":"Library","to_player":"p0"}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c52","card":"<hidden>","from":"Library","from_player":"p0","to":"Library","to_player":"p0"}
+{"type":"history","zone":"history","turn":9,"event":"SpellResolved","source_id":"c43","source":"Commune with Spirits","ability":"Look at the top four cards of your library. You may reveal an enchantment or land card from among them and put it into your hand. Put the rest on the bottom of your library in a random order.","fizzled":false}
+{"type":"history","zone":"history","turn":9,"event":"CardChangeZone","card_id":"c43","card":"Commune with Spirits","from":"Stack","to":"Graveyard","to_player":"p0"}
+{"type":"history","zone":"history","turn":10,"event":"CardChangeZone","card_id":"c115","card":"Armadillo Cloak","from":"Library","from_player":"p1","to":"Hand","to_player":"p1"}
+{"type":"history","zone":"history","turn":10,"event":"CardChangeZone","card_id":"c90","card":"Plains","from":"Hand","from_player":"p1","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":10,"event":"LandPlayed","actor":"p1","card_id":"c90","card":"Plains"}
+{"type":"history","zone":"history","turn":10,"event":"CardChangeZone","card_id":"c115","card":"Armadillo Cloak","from":"Hand","from_player":"p1","to":"Stack"}
+{"type":"history","zone":"history","turn":10,"event":"SpellAbilityCast","source_id":"c115","source":"Armadillo Cloak","ability":"Armadillo Cloak","targets":"[Slippery Bogle (94)]"}
+{"type":"global","turn":10,"phase":"MAIN1","active_is_viewer":true,"stack_size":1}
+{"type":"player","id":"p1","side":"self","life":16,"lands_played":1}
+{"type":"game_object","zone":"self_battlefield","id":"c128","name":"Forest","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"self_battlefield","id":"c89","name":"Plains","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"self_battlefield","id":"c94","name":"Slippery Bogle","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false,"power":1,"toughness":1,"damage":0}
+{"type":"game_object","zone":"self_battlefield","id":"c91","name":"Plains","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"self_battlefield","id":"c130","name":"Forest","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"self_battlefield","id":"c109","name":"Abundant Growth","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false,"edges":[{"rel":"attached_to","to":"c128"}]}
+{"type":"game_object","zone":"self_battlefield","id":"c90","name":"Plains","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"self_hand","id":"c120","name":"Utopia Sprawl","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c119","name":"Utopia Sprawl","state":"Original"}
+{"type":"game_object","zone":"self_graveyard","id":"c121","name":"Shattered Landscape","state":"Original"}
+{"type":"game_object","zone":"self_graveyard","id":"c122","name":"Shattered Landscape","state":"Original"}
+{"type":"game_object","zone":"self_graveyard","id":"c92","name":"Slippery Bogle","state":"Original"}
+{"type":"game_object","zone":"self_graveyard","id":"c110","name":"Spirit Link","state":"Original"}
+{"type":"game_object","zone":"self_graveyard","id":"c82","name":"Sentinel's Eyes","state":"Original"}
+{"type":"library_card","zone":"self_library","name":"Abundant Growth","position":"unknown","count":3}
+{"type":"library_card","zone":"self_library","name":"Ancestral Mask","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Armadillo Cloak","position":"unknown","count":3}
+{"type":"library_card","zone":"self_library","name":"Cartouche of Solidarity","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Commune with Spirits","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Ethereal Armor","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Forest","position":"unknown","count":7}
+{"type":"library_card","zone":"self_library","name":"Gladecover Scout","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Khalni Garden","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Lifelink","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Malevolent Rumble","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Plains","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Rancor","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Sentinel's Eyes","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Silhana Ledgewalker","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Slippery Bogle","position":"unknown","count":2}
+{"type":"player","id":"p0","side":"opp","life":35,"lands_played":0}
+{"type":"game_object","zone":"opp_battlefield","id":"c15","name":"Plains","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"opp_battlefield","id":"c14","name":"Plains","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"opp_battlefield","id":"c53","name":"Forest","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"opp_battlefield","id":"c34","name":"Abundant Growth","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false,"edges":[{"rel":"attached_to","to":"c15"}]}
+{"type":"game_object","zone":"opp_battlefield","id":"c12","name":"Gladecover Scout","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false,"power":10,"toughness":10,"damage":0}
+{"type":"game_object","zone":"opp_battlefield","id":"c35","name":"Spirit Link","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false,"edges":[{"rel":"attached_to","to":"c12"}]}
+{"type":"game_object","zone":"opp_battlefield","id":"c16","name":"Plains","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"opp_battlefield","id":"c58","name":"Ancestral Mask","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false,"edges":[{"rel":"attached_to","to":"c12"}]}
+{"type":"game_object","zone":"opp_battlefield","id":"c56","name":"Forest","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"opp_battlefield","id":"c21","name":"Cartouche of Solidarity","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false,"edges":[{"rel":"attached_to","to":"c12"}]}
+{"type":"game_object","zone":"opp_battlefield","id":"c157","name":"Warrior Token","state":"Original","tapped":false,"sick":true,"face_down":false,"phased_out":false,"token":true,"power":1,"toughness":1,"damage":0}
+{"type":"game_object","zone":"opp_battlefield","id":"c17","name":"Slippery Bogle","state":"Original","tapped":false,"sick":true,"face_down":false,"phased_out":false,"power":1,"toughness":1,"damage":0}
+{"type":"game_object","zone":"opp_hand","id":"c39","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_graveyard","id":"c46","name":"Shattered Landscape","state":"Original"}
+{"type":"game_object","zone":"opp_graveyard","id":"c47","name":"Shattered Landscape","state":"Original"}
+{"type":"game_object","zone":"opp_graveyard","id":"c43","name":"Commune with Spirits","state":"Original"}
+{"type":"library_card","zone":"opp_library","name":"HIDDEN","position":"unknown","count":45}
+{"type":"stack_item","zone":"stack","id":"s41","is_spell":true,"is_trigger":false,"source":"Armadillo Cloak","edges":[{"rel":"source_is","to":"c115"},{"rel":"targeting","to":"c94"}]}
+{"type":"action","zone":"actions","api":"Mana","source":"Forest","edges":[{"rel":"source_is","to":"c128"}]}
+{"type":"action","zone":"actions","api":"Mana","source":"Forest","edges":[{"rel":"source_is","to":"c128"}]}
+{"type":"action","zone":"actions","api":"Mana","source":"Plains","edges":[{"rel":"source_is","to":"c89"}]}
+{"type":"action","zone":"actions","api":"Mana","source":"Plains","edges":[{"rel":"source_is","to":"c91"}]}
+{"type":"action","zone":"actions","api":"Mana","source":"Forest","edges":[{"rel":"source_is","to":"c130"}]}
+{"type":"action","zone":"actions","api":"Mana","source":"Plains","edges":[{"rel":"source_is","to":"c90"}]}

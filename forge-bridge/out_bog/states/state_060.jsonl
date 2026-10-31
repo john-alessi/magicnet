@@ -1,0 +1,105 @@
+{"type":"history","zone":"history","turn":1,"event":"CardChangeZone","card_id":"c130","card":"Forest","from":"Hand","from_player":"p1","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":1,"event":"LandPlayed","actor":"p1","card_id":"c130","card":"Forest"}
+{"type":"history","zone":"history","turn":1,"event":"CardChangeZone","card_id":"c109","card":"Abundant Growth","from":"Hand","from_player":"p1","to":"Stack"}
+{"type":"history","zone":"history","turn":1,"event":"SpellAbilityCast","source_id":"c109","source":"Abundant Growth","ability":"Abundant Growth","targets":"[Forest (130)]"}
+{"type":"history","zone":"history","turn":1,"event":"CardAttachment","attachment_id":"c109","attachment":"Abundant Growth","to_id":"c130","to":"Forest"}
+{"type":"history","zone":"history","turn":1,"event":"CardChangeZone","card_id":"c109","card":"Abundant Growth","from":"Stack","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":1,"event":"SpellResolved","source_id":"c109","source":"Abundant Growth","ability":"Abundant Growth","fizzled":false}
+{"type":"history","zone":"history","turn":1,"event":"SpellAbilityCast","source_id":"c109","source":"Abundant Growth","ability":"When Abundant Growth enters, draw a card. [Zone Changer: Abundant Growth (109)]"}
+{"type":"history","zone":"history","turn":1,"event":"CardChangeZone","card_id":"c115","card":"Armadillo Cloak","from":"Library","from_player":"p1","to":"Hand","to_player":"p1"}
+{"type":"history","zone":"history","turn":1,"event":"SpellResolved","source_id":"c109","source":"Abundant Growth","ability":"When Abundant Growth enters, draw a card. [Zone Changer: Abundant Growth (109)]","fizzled":false}
+{"type":"history","zone":"history","turn":1,"event":"AttackersDeclared","actor":"p1","count":0}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c8","card":"<hidden>","from":"Library","from_player":"p0","to":"Hand","to_player":"p0"}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c51","card":"Forest","from":"Hand","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":2,"event":"LandPlayed","actor":"p0","card_id":"c51","card":"Forest"}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c31","card":"Abundant Growth","from":"Hand","from_player":"p0","to":"Stack"}
+{"type":"history","zone":"history","turn":2,"event":"SpellAbilityCast","source_id":"c31","source":"Abundant Growth","ability":"Abundant Growth","targets":"[Forest (51)]"}
+{"type":"history","zone":"history","turn":2,"event":"CardAttachment","attachment_id":"c31","attachment":"Abundant Growth","to_id":"c51","to":"Forest"}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c31","card":"Abundant Growth","from":"Stack","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":2,"event":"SpellResolved","source_id":"c31","source":"Abundant Growth","ability":"Abundant Growth","fizzled":false}
+{"type":"history","zone":"history","turn":2,"event":"SpellAbilityCast","source_id":"c31","source":"Abundant Growth","ability":"When Abundant Growth enters, draw a card. [Zone Changer: Abundant Growth (31)]"}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c42","card":"<hidden>","from":"Library","from_player":"p0","to":"Hand","to_player":"p0"}
+{"type":"history","zone":"history","turn":2,"event":"SpellResolved","source_id":"c31","source":"Abundant Growth","ability":"When Abundant Growth enters, draw a card. [Zone Changer: Abundant Growth (31)]","fizzled":false}
+{"type":"history","zone":"history","turn":2,"event":"AttackersDeclared","actor":"p0","count":0}
+{"type":"history","zone":"history","turn":3,"event":"CardChangeZone","card_id":"c77","card":"Silhana Ledgewalker","from":"Library","from_player":"p1","to":"Hand","to_player":"p1"}
+{"type":"history","zone":"history","turn":3,"event":"CardChangeZone","card_id":"c123","card":"Forest","from":"Hand","from_player":"p1","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":3,"event":"LandPlayed","actor":"p1","card_id":"c123","card":"Forest"}
+{"type":"history","zone":"history","turn":3,"event":"AttackersDeclared","actor":"p1","count":0}
+{"type":"history","zone":"history","turn":3,"event":"CardChangeZone","card_id":"c77","card":"Silhana Ledgewalker","from":"Hand","from_player":"p1","to":"Stack"}
+{"type":"history","zone":"history","turn":3,"event":"SpellAbilityCast","source_id":"c77","source":"Silhana Ledgewalker","ability":"Silhana Ledgewalker - Creature 1 / 1"}
+{"type":"history","zone":"history","turn":3,"event":"CardChangeZone","card_id":"c77","card":"Silhana Ledgewalker","from":"Stack","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":3,"event":"SpellResolved","source_id":"c77","source":"Silhana Ledgewalker","ability":"Silhana Ledgewalker - Creature 1 / 1","fizzled":false}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c49","card":"<hidden>","from":"Library","from_player":"p0","to":"Hand","to_player":"p0"}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c47","card":"Shattered Landscape","from":"Hand","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":4,"event":"LandPlayed","actor":"p0","card_id":"c47","card":"Shattered Landscape"}
+{"type":"history","zone":"history","turn":4,"event":"CardSacrificed","card_id":"c47","card":"Shattered Landscape"}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c47","card":"Shattered Landscape","from":"Battlefield","from_player":"p0","to":"Graveyard","to_player":"p0"}
+{"type":"history","zone":"history","turn":4,"event":"SpellAbilityCast","source_id":"c47","source":"Shattered Landscape","ability":"{T}, Sacrifice Shattered Landscape: Search your library for a basic Mountain, Plains, or Swamp card, put it onto the battlefield tapped, then shuffle."}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c14","card":"Plains","from":"Library","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":4,"event":"SpellResolved","source_id":"c47","source":"Shattered Landscape","ability":"{T}, Sacrifice Shattered Landscape: Search your library for a basic Mountain, Plains, or Swamp card, put it onto the battlefield tapped, then shuffle.","fizzled":false}
+{"type":"history","zone":"history","turn":4,"event":"AttackersDeclared","actor":"p0","count":0}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c17","card":"Slippery Bogle","from":"Hand","from_player":"p0","to":"Stack"}
+{"type":"history","zone":"history","turn":4,"event":"SpellAbilityCast","source_id":"c17","source":"Slippery Bogle","ability":"Slippery Bogle - Creature 1 / 1"}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c17","card":"Slippery Bogle","from":"Stack","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":4,"event":"SpellResolved","source_id":"c17","source":"Slippery Bogle","ability":"Slippery Bogle - Creature 1 / 1","fizzled":false}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c110","card":"Spirit Link","from":"Library","from_player":"p1","to":"Hand","to_player":"p1"}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c127","card":"Forest","from":"Hand","from_player":"p1","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":5,"event":"LandPlayed","actor":"p1","card_id":"c127","card":"Forest"}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c115","card":"Armadillo Cloak","from":"Hand","from_player":"p1","to":"Stack"}
+{"type":"history","zone":"history","turn":5,"event":"SpellAbilityCast","source_id":"c115","source":"Armadillo Cloak","ability":"Armadillo Cloak","targets":"[Silhana Ledgewalker (77)]"}
+{"type":"history","zone":"history","turn":5,"event":"CardAttachment","attachment_id":"c115","attachment":"Armadillo Cloak","to_id":"c77","to":"Silhana Ledgewalker"}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c115","card":"Armadillo Cloak","from":"Stack","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":5,"event":"SpellResolved","source_id":"c115","source":"Armadillo Cloak","ability":"Armadillo Cloak","fizzled":false}
+{"type":"history","zone":"history","turn":5,"event":"AttackersDeclared","actor":"p1","count":1,"edges":[{"rel":"attacks","to":"c77"},{"rel":"defender","to":"p0"}]}
+{"type":"history","zone":"history","turn":5,"event":"BlockersDeclared","actor":"p0","blocks_count":0,"unblocked_count":1,"edges":[{"rel":"unblocked","to":"c77"}]}
+{"type":"history","zone":"history","turn":5,"event":"PlayerDamaged","target":"p0","source_id":"c77","source":"Silhana Ledgewalker","amount":3,"combat":true,"infect":false}
+{"type":"history","zone":"history","turn":5,"event":"PlayerLivesChanged","target":"p0","from":20,"to":17}
+{"type":"history","zone":"history","turn":5,"event":"SpellAbilityCast","source_id":"c115","source":"Armadillo Cloak","ability":"Whenever enchanted creature deals damage, you gain that much life. [Damage Source: Silhana Ledgewalker (77), Damaged: [P0-[Pauper] #19 - Bogles], Amount: 3]"}
+{"type":"history","zone":"history","turn":5,"event":"PlayerLivesChanged","target":"p1","from":20,"to":23}
+{"type":"history","zone":"history","turn":5,"event":"SpellResolved","source_id":"c115","source":"Armadillo Cloak","ability":"Whenever enchanted creature deals damage, you gain that much life. [Damage Source: Silhana Ledgewalker (77), Damaged: [P0-[Pauper] #19 - Bogles], Amount: 3]","fizzled":false}
+{"type":"global","turn":5,"phase":"COMBAT_DAMAGE","active_is_viewer":true,"stack_size":0}
+{"type":"player","id":"p1","side":"self","life":23,"lands_played":1}
+{"type":"game_object","zone":"self_battlefield","id":"c130","name":"Forest","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"self_battlefield","id":"c109","name":"Abundant Growth","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false,"edges":[{"rel":"attached_to","to":"c130"}]}
+{"type":"game_object","zone":"self_battlefield","id":"c123","name":"Forest","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"self_battlefield","id":"c77","name":"Silhana Ledgewalker","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false,"power":3,"toughness":3,"damage":0,"edges":[{"rel":"attacking","to":"p0"}]}
+{"type":"game_object","zone":"self_battlefield","id":"c127","name":"Forest","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"self_battlefield","id":"c115","name":"Armadillo Cloak","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false,"edges":[{"rel":"attached_to","to":"c77"}]}
+{"type":"game_object","zone":"self_hand","id":"c85","name":"Gladecover Scout","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c83","name":"Sentinel's Eyes","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c86","name":"Gladecover Scout","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c110","name":"Spirit Link","state":"Original"}
+{"type":"library_card","zone":"self_library","name":"Abundant Growth","position":"unknown","count":3}
+{"type":"library_card","zone":"self_library","name":"Ancestral Mask","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Armadillo Cloak","position":"unknown","count":3}
+{"type":"library_card","zone":"self_library","name":"Cartouche of Solidarity","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Commune with Spirits","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Ethereal Armor","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Forest","position":"unknown","count":6}
+{"type":"library_card","zone":"self_library","name":"Gladecover Scout","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Khalni Garden","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Lifelink","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Malevolent Rumble","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Plains","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Rancor","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Sentinel's Eyes","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Shattered Landscape","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Silhana Ledgewalker","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Slippery Bogle","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Utopia Sprawl","position":"unknown","count":2}
+{"type":"player","id":"p0","side":"opp","life":17,"lands_played":0}
+{"type":"game_object","zone":"opp_battlefield","id":"c51","name":"Forest","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"opp_battlefield","id":"c31","name":"Abundant Growth","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false,"edges":[{"rel":"attached_to","to":"c51"}]}
+{"type":"game_object","zone":"opp_battlefield","id":"c14","name":"Plains","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"opp_battlefield","id":"c17","name":"Slippery Bogle","state":"Original","tapped":false,"sick":true,"face_down":false,"phased_out":false,"power":1,"toughness":1,"damage":0}
+{"type":"game_object","zone":"opp_hand","id":"c41","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c55","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c8","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c42","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c49","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_graveyard","id":"c47","name":"Shattered Landscape","state":"Original"}
+{"type":"library_card","zone":"opp_library","name":"HIDDEN","position":"unknown","count":50}
+{"type":"action","zone":"actions","api":"Mana","source":"Forest","edges":[{"rel":"source_is","to":"c130"}]}
+{"type":"action","zone":"actions","api":"Mana","source":"Forest","edges":[{"rel":"source_is","to":"c130"}]}
+{"type":"action","zone":"actions","api":"Mana","source":"Forest","edges":[{"rel":"source_is","to":"c123"}]}
+{"type":"action","zone":"actions","api":"Mana","source":"Forest","edges":[{"rel":"source_is","to":"c127"}]}

@@ -1,0 +1,74 @@
+{"type":"history","zone":"history","turn":1,"event":"CardChangeZone","card_id":"c13","card":"Plains","from":"Hand","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":1,"event":"LandPlayed","actor":"p0","card_id":"c13","card":"Plains"}
+{"type":"history","zone":"history","turn":1,"event":"AttackersDeclared","actor":"p0","count":0}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c98","card":"<hidden>","from":"Library","from_player":"p1","to":"Hand","to_player":"p1"}
+{"type":"history","zone":"history","turn":2,"event":"CardChangeZone","card_id":"c91","card":"Plains","from":"Hand","from_player":"p1","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":2,"event":"LandPlayed","actor":"p1","card_id":"c91","card":"Plains"}
+{"type":"history","zone":"history","turn":2,"event":"AttackersDeclared","actor":"p1","count":0}
+{"type":"history","zone":"history","turn":3,"event":"CardChangeZone","card_id":"c46","card":"Shattered Landscape","from":"Library","from_player":"p0","to":"Hand","to_player":"p0"}
+{"type":"history","zone":"history","turn":3,"event":"CardChangeZone","card_id":"c46","card":"Shattered Landscape","from":"Hand","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":3,"event":"LandPlayed","actor":"p0","card_id":"c46","card":"Shattered Landscape"}
+{"type":"history","zone":"history","turn":3,"event":"CardSacrificed","card_id":"c46","card":"Shattered Landscape"}
+{"type":"history","zone":"history","turn":3,"event":"CardChangeZone","card_id":"c46","card":"Shattered Landscape","from":"Battlefield","from_player":"p0","to":"Graveyard","to_player":"p0"}
+{"type":"history","zone":"history","turn":3,"event":"SpellAbilityCast","source_id":"c46","source":"Shattered Landscape","ability":"{T}, Sacrifice Shattered Landscape: Search your library for a basic Mountain, Plains, or Swamp card, put it onto the battlefield tapped, then shuffle."}
+{"type":"history","zone":"history","turn":3,"event":"CardChangeZone","card_id":"c15","card":"Plains","from":"Library","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":3,"event":"SpellResolved","source_id":"c46","source":"Shattered Landscape","ability":"{T}, Sacrifice Shattered Landscape: Search your library for a basic Mountain, Plains, or Swamp card, put it onto the battlefield tapped, then shuffle.","fizzled":false}
+{"type":"history","zone":"history","turn":3,"event":"AttackersDeclared","actor":"p0","count":0}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c99","card":"<hidden>","from":"Library","from_player":"p1","to":"Hand","to_player":"p1"}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c131","card":"Forest","from":"Hand","from_player":"p1","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":4,"event":"LandPlayed","actor":"p1","card_id":"c131","card":"Forest"}
+{"type":"history","zone":"history","turn":4,"event":"AttackersDeclared","actor":"p1","count":0}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c76","card":"Silhana Ledgewalker","from":"Hand","from_player":"p1","to":"Stack"}
+{"type":"history","zone":"history","turn":4,"event":"SpellAbilityCast","source_id":"c76","source":"Silhana Ledgewalker","ability":"Silhana Ledgewalker - Creature 1 / 1"}
+{"type":"history","zone":"history","turn":4,"event":"CardChangeZone","card_id":"c76","card":"Silhana Ledgewalker","from":"Stack","to":"Battlefield","to_player":"p1"}
+{"type":"history","zone":"history","turn":4,"event":"SpellResolved","source_id":"c76","source":"Silhana Ledgewalker","ability":"Silhana Ledgewalker - Creature 1 / 1","fizzled":false}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c47","card":"Shattered Landscape","from":"Library","from_player":"p0","to":"Hand","to_player":"p0"}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c47","card":"Shattered Landscape","from":"Hand","from_player":"p0","to":"Battlefield","to_player":"p0"}
+{"type":"history","zone":"history","turn":5,"event":"LandPlayed","actor":"p0","card_id":"c47","card":"Shattered Landscape"}
+{"type":"history","zone":"history","turn":5,"event":"CardSacrificed","card_id":"c47","card":"Shattered Landscape"}
+{"type":"history","zone":"history","turn":5,"event":"CardChangeZone","card_id":"c47","card":"Shattered Landscape","from":"Battlefield","from_player":"p0","to":"Graveyard","to_player":"p0"}
+{"type":"history","zone":"history","turn":5,"event":"SpellAbilityCast","source_id":"c47","source":"Shattered Landscape","ability":"{T}, Sacrifice Shattered Landscape: Search your library for a basic Mountain, Plains, or Swamp card, put it onto the battlefield tapped, then shuffle."}
+{"type":"global","turn":5,"phase":"MAIN1","active_is_viewer":true,"stack_size":1}
+{"type":"player","id":"p0","side":"self","life":20,"lands_played":1}
+{"type":"game_object","zone":"self_battlefield","id":"c13","name":"Plains","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"self_battlefield","id":"c15","name":"Plains","state":"Original","tapped":false,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"self_hand","id":"c41","name":"Armadillo Cloak","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c3","name":"Ethereal Armor","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c42","name":"Commune with Spirits","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c9","name":"Gladecover Scout","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c5","name":"Ethereal Armor","state":"Original"}
+{"type":"game_object","zone":"self_hand","id":"c50","name":"Forest","state":"Original"}
+{"type":"game_object","zone":"self_graveyard","id":"c46","name":"Shattered Landscape","state":"Original"}
+{"type":"game_object","zone":"self_graveyard","id":"c47","name":"Shattered Landscape","state":"Original"}
+{"type":"library_card","zone":"self_library","name":"Abundant Growth","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Ancestral Mask","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Armadillo Cloak","position":"unknown","count":3}
+{"type":"library_card","zone":"self_library","name":"Cartouche of Solidarity","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Commune with Spirits","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Ethereal Armor","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Forest","position":"unknown","count":8}
+{"type":"library_card","zone":"self_library","name":"Gladecover Scout","position":"unknown","count":3}
+{"type":"library_card","zone":"self_library","name":"Khalni Garden","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Lifelink","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Malevolent Rumble","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Plains","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Rancor","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Sentinel's Eyes","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Silhana Ledgewalker","position":"unknown","count":2}
+{"type":"library_card","zone":"self_library","name":"Slippery Bogle","position":"unknown","count":4}
+{"type":"library_card","zone":"self_library","name":"Spirit Link","position":"unknown","count":1}
+{"type":"library_card","zone":"self_library","name":"Utopia Sprawl","position":"unknown","count":2}
+{"type":"player","id":"p1","side":"opp","life":20,"lands_played":0}
+{"type":"game_object","zone":"opp_battlefield","id":"c91","name":"Plains","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"opp_battlefield","id":"c131","name":"Forest","state":"Original","tapped":true,"sick":false,"face_down":false,"phased_out":false}
+{"type":"game_object","zone":"opp_battlefield","id":"c76","name":"Silhana Ledgewalker","state":"Original","tapped":false,"sick":true,"face_down":false,"phased_out":false,"power":1,"toughness":1,"damage":0}
+{"type":"game_object","zone":"opp_hand","id":"c85","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c115","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c120","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c101","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c98","name":"HIDDEN"}
+{"type":"game_object","zone":"opp_hand","id":"c99","name":"HIDDEN"}
+{"type":"library_card","zone":"opp_library","name":"HIDDEN","position":"unknown","count":51}
+{"type":"stack_item","zone":"stack","id":"s64","is_spell":false,"is_trigger":false,"source":"Shattered Landscape","edges":[{"rel":"source_is","to":"c47"}]}
+{"type":"action","zone":"actions","api":"Mana","source":"Plains","edges":[{"rel":"source_is","to":"c13"}]}
+{"type":"action","zone":"actions","api":"Mana","source":"Plains","edges":[{"rel":"source_is","to":"c15"}]}
