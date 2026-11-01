@@ -12,7 +12,11 @@ Changing the order is a schema change and invalidates existing checkpoints.
 
 from __future__ import annotations
 
-SCHEMA = 11
+SCHEMA = 12
+
+# Schema 12: a card the viewer may not see has no ``name``/``oracle_id`` at all
+# (history roles keep only ``<role>_id``); absence means unknown. See
+# magicnet.dump.is_hidden.
 
 # Schema 9: every model input on a token lives in this sub-dictionary; the top
 # level holds only type, zone, edges and identity/ref keys (see keys.json and
@@ -28,7 +32,7 @@ ZONES: tuple[str, ...] = (
     "self_library",
     # Schema 4: own sideboard named, opponent's redacted unless revealed.
     # Schema 5: opponent's hidden sideboard cards are one ``library_card``
-    # aggregate (name HIDDEN, ``count``); opponent hand cards the viewer was
+    # aggregate (``count``, no name since schema 12); opponent hand cards the viewer was
     # shown are named and marked ``known_by_reveal``.
     "self_sideboard",
     "opp_battlefield",

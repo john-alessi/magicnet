@@ -6,7 +6,7 @@ and must be regenerated after a schema bump.
 
 ## pio_mrp.jsonl
 12 AI-vs-AI games, Mono-Red Prowess mirror (`fixtures/pio_mrp`), seed 7,
-combat and choice routing on, **schema 11** (model inputs under each token's
+combat and choice routing on, **schema 12** (model inputs under each token's
 `components`; read them with `magicnet.dump.comp(tok, key)`; abilities as the
 `gained`/`lost` difference from the printed card, plus `base_power`/`base_toughness`). Regenerate with,
 from `forge-bridge/`:
@@ -19,7 +19,7 @@ from `forge-bridge/`:
 Hand-picked decisions with heavily modified permanents. "Monster" is the
 Monster Role token (`types` "Enchantment - Aura Role"), joined to its creature
 by an `attached_to` edge; its +1/+1 and Trample show up on the creature as
-`power`/`toughness` and `gained`. Regenerated at schema 11 from the same seed:
+`power`/`toughness` and `gained`. Regenerated at schema 12 (unseen cards now carry no name instead of `HIDDEN`) from the same seed:
 the games are identical, so the picks below are unchanged.
 
 | game | decision | viewer | turn | why |

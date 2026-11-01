@@ -6,16 +6,16 @@
     "flag": "boolean",
     "string": "short string; embed the value with the catalog's text embedder (POST /strings/embed)",
     "string_list": "list of short strings; embed each and pool",
-    "ref": "names or points at another object/player; top-level (not under components); should become an edge",
+    "categorical": "value from a closed vocabulary named by the key's `vocab`; look up a learned embedding per vocabulary (shared across keys with the same vocab)", "ref": "names or points at another object/player; top-level (not under components); should become an edge",
     "identity": "join key / token identity, not a component; top-level; never encoded as (key, value)"
   },
   "keys": [
     {"key": "type", "description": "token type", "value_kind": "identity", "token_types": ["global", "player", "game_object", "library_card", "stack_item", "delayed_trigger", "history"], "notes": "Selects the encoder (schema.ENCODER_MAPPING); not a component."},
-    {"key": "zone", "description": "zone", "value_kind": "identity", "token_types": ["game_object", "library_card", "stack_item", "delayed_trigger", "history"], "notes": "Segment embedding (schema.ZONES)."},
+    {"key": "zone", "description": "zone this object is in", "value_kind": "categorical", "vocab": "zone", "top_level": true, "token_types": ["game_object", "library_card", "stack_item", "delayed_trigger", "history"], "notes": "Values are magicnet.schema.ZONES (index with schema.zone_index). Stays at the token top level: it is also structural (sides, masking, segment embedding)."},
     {"key": "revealed_from", "description": "zone the card was revealed from", "value_kind": "string", "token_types": ["history"], "notes": "Forge zone name of the revealed card (Hand, Library, Sideboard...)."},
     {"key": "edges", "description": "relations to other tokens", "value_kind": "identity", "token_types": ["game_object", "stack_item", "delayed_trigger", "history", "action"], "notes": "Resolved to relation-aware attention bias, not a component."},
     {"key": "id", "description": "object id", "value_kind": "identity", "token_types": ["player", "game_object", "library_card", "stack_item"], "notes": "Join key for edges; stripped by dump.strip_ids."},
-    {"key": "name", "description": "card name", "value_kind": "identity", "token_types": ["game_object", "library_card"], "notes": "Card identity; the card embedding comes from oracle_id via the card catalog. \"HIDDEN\" when not visible."},
+    {"key": "name", "description": "name of this object", "value_kind": "string", "top_level": true, "token_types": ["game_object", "library_card"], "notes": "Embedded even when oracle_id is present: names are part of the rules grammar (\"cards named X\", \"with X in its name\"). Absent on an object the viewer cannot see (schema 12; per the rules an unseen or face-down card has no name), including the hidden-sideboard/library count aggregates; such tokens carry no oracle_id either. Test with magicnet.dump.is_hidden. Stays at the token top level for redaction checks."},
     {"key": "oracle_id", "description": "card oracle id", "value_kind": "identity", "token_types": ["game_object", "library_card", "action"], "notes": "Join to the card catalog."},
 
     {"key": "turn", "description": "turn number", "value_kind": "number", "token_types": ["global", "history", "record"], "notes": "On history tokens: the turn the event happened in."},
@@ -90,7 +90,7 @@
     {"key": "to_oracle_id", "description": "oracle id of the new attachment target", "value_kind": "identity", "token_types": ["history"]},
     {"key": "from_player", "description": "owner of the zone it came from", "value_kind": "ref", "token_types": ["history"], "notes": "Player ref; should become an edge."},
     {"key": "to_player", "description": "owner of the zone it went to", "value_kind": "ref", "token_types": ["history"], "notes": "Player ref; should become an edge."},
-    {"key": "card", "description": "card involved", "value_kind": "ref", "token_types": ["history"], "notes": "Card name or <hidden>; card_id/card_oracle_id identify it. Should become an edge to the object token. CardModeChosen emits a bare card name here with no id."},
+    {"key": "card", "description": "card involved", "value_kind": "ref", "token_types": ["history"], "notes": "Card name, absent when the viewer cannot see the card (schema 12; card_id is still present, card_oracle_id is not); card_id/card_oracle_id identify it. Should become an edge to the object token. CardModeChosen emits a bare card name here with no id."},
     {"key": "card_id", "description": "id of the card involved", "value_kind": "identity", "token_types": ["history"]},
     {"key": "card_oracle_id", "description": "oracle id of the card involved", "value_kind": "identity", "token_types": ["history"]},
     {"key": "attachment", "description": "aura or equipment being attached", "value_kind": "ref", "token_types": ["history"], "notes": "Card name; should become an edge."},
@@ -128,7 +128,7 @@
     {"pattern": "card{i}_oracle_id", "description": "oracle id of card {i}", "value_kind": "identity", "token_types": ["history"]},
     {"pattern": "card{i}_id", "description": "id of card {i}", "value_kind": "identity", "token_types": ["history"]},
     {"pattern": "card{i}", "description": "card {i} involved", "value_kind": "ref", "token_types": ["history"], "java": ["\"card\"+(i++)"], "notes": "CardRegenerated: one per regenerated card; should become edges."},
-    {"pattern": "{role}_oracle_id", "description": "oracle id of the {role}", "value_kind": "identity", "token_types": ["history"], "java": ["role+\"_oracle_id\""], "notes": "EventTokenizer.card(): every card role gets <role>_id and <role>_oracle_id."},
+    {"pattern": "{role}_oracle_id", "description": "oracle id of the {role}", "value_kind": "identity", "token_types": ["history"], "java": ["role+\"_oracle_id\""], "notes": "EventTokenizer.card(): every card role gets <role>_id; <role> (the name) and <role>_oracle_id only when the viewer can see the card (schema 12)."},
     {"pattern": "{role}_id", "description": "id of the {role}", "value_kind": "identity", "token_types": ["history"], "java": ["role+\"_id\""]},
     {"pattern": "{role}_player", "description": "owner of the {role} zone", "value_kind": "ref", "token_types": ["history"], "java": ["role+\"_player\""], "notes": "EventTokenizer.zone()."}
   ],

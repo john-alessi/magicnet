@@ -19,15 +19,16 @@ _REGISTRY = load_registry()
 
 def _nest(flat: dict) -> dict:
     """Schema-9 layout from a flat fixture: identity/ref keys (per keys.json)
-    stay top-level, the rest go under ``components``."""
-    top = {k: v for k, v in flat.items()
-           if _REGISTRY.resolve(k)[1].value_kind in validate_dump.TOP_LEVEL_KINDS}
+    stay top-level, the rest go under ``components``. A ``None`` value is
+    omitted, as for a hidden card's name (schema 12)."""
+    flat = {k: v for k, v in flat.items() if v is not None}
+    top = {k: v for k, v in flat.items() if _REGISTRY.is_top_level(k)}
     components = {k: v for k, v in flat.items() if k not in top}
     return {**top, "components": components} if components else top
 
 
 SELF = _nest({"type": "player", "id": "p0", "side": "self"})
-SIDEBOARD = _nest({"type": "library_card", "zone": "opp_sideboard", "name": "HIDDEN", "count": 15})
+SIDEBOARD = _nest({"type": "library_card", "zone": "opp_sideboard", "count": 15})
 
 
 def _hand_reveal(card_id: str, name: str, shown_to: str = "p0") -> dict:
@@ -36,7 +37,7 @@ def _hand_reveal(card_id: str, name: str, shown_to: str = "p0") -> dict:
                   "revealed_from": "Hand", "owner": "p1", "shown_to": shown_to})
 
 
-def _move(card_id: str, src: str, dst: str, name: str = "<hidden>", **extra) -> dict:
+def _move(card_id: str, src: str, dst: str, name: str | None = None, **extra) -> dict:
     return _nest({"type": "history", "zone": "history", "event": "CardChangeZone",
                   "card_id": card_id, "card": name, "from": src, "to": dst, **extra})
 
@@ -102,6 +103,25 @@ def test_sideboard_aggregate_cannot_claim_revealed(tmp_path: Path) -> None:
     assert _leaks(tmp_path, [([], [SELF, smuggled])])
 
 
+def test_named_opponent_hand_card_or_aggregate_is_a_leak(tmp_path: Path) -> None:
+    library = _nest({"type": "library_card", "zone": "opp_library", "count": 30})
+    hidden = _bf("c5", None, zone="opp_hand")
+    assert _leaks(tmp_path, [([], [SELF, hidden, library, SIDEBOARD])]) == {}
+    assert _leaks(tmp_path, [([], [SELF, dict(hidden, name="Bolt")])]) == {
+        "unredacted name in opp_hand: Bolt": 1}
+    assert _leaks(tmp_path, [([], [SELF, dict(library, name="Bolt")])]) == {
+        "unredacted name in opp_library: Bolt": 1}
+
+
+def test_oracle_id_on_an_unnamed_card_or_role_is_a_leak(tmp_path: Path) -> None:
+    exiled = _bf("c5", None, zone="opp_exile", oracle_id="o-bolt")
+    move = _move("c6", "Library", "Hand", to_player="p1", card_oracle_id="o-bolt")
+    assert _leaks(tmp_path, [([move], [SELF, exiled])]) == {
+        "oracle_id on hidden game_object in opp_exile": 1,
+        "card_oracle_id on hidden history in history": 1,
+    }
+
+
 def test_public_move_into_hand_explains_the_card(tmp_path: Path) -> None:
     assert _leaks(tmp_path, [
         ([_move("c5", "Battlefield", "Hand", "Bear", to_player="p1")],
@@ -145,7 +165,7 @@ def test_face_down_departure_the_viewer_could_see_is_public(tmp_path: Path) -> N
 
 
 def test_face_down_departure_redacted_in_the_last_state_is_a_leak(tmp_path: Path) -> None:
-    unseen = _nest({"type": "game_object", "zone": "opp_exile", "id": "c5", "name": "HIDDEN"})
+    unseen = _nest({"type": "game_object", "zone": "opp_exile", "id": "c5"})
     assert _leaks(tmp_path, [
         ([], [SELF, unseen]),
         ([_move("c5", "Exile", "Hand", "Bear", to_player="p1", face_down=True)], [SELF]),
@@ -174,7 +194,7 @@ def test_dig_reveal_only_covers_the_cards_next_move(tmp_path: Path) -> None:
     ])
 
 
-def _bf(card_id: str, name: str, zone: str = "opp_battlefield", **extra) -> dict:
+def _bf(card_id: str, name: str | None, zone: str = "opp_battlefield", **extra) -> dict:
     return _nest({"type": "game_object", "zone": zone, "id": card_id, "name": name, **extra})
 
 
@@ -192,20 +212,20 @@ def test_affects_between_visible_tokens_passes(tmp_path: Path) -> None:
 
 def test_affects_into_a_hidden_zone_is_a_leak(tmp_path: Path) -> None:
     painter = _affects(_bf("c1", "Painter's Servant"), "c2")
-    hand = _bf("c2", "HIDDEN", zone="opp_hand")
+    hand = _bf("c2", None, zone="opp_hand")
     offenders = _leaks(tmp_path, [([], [SELF, painter, hand])])
     assert "affects edge to hidden token in opp_hand" in offenders
 
 
 def test_affects_from_a_redacted_source_or_to_an_absent_id_is_a_leak(tmp_path: Path) -> None:
-    hidden = _affects(_bf("c1", "HIDDEN"), "c2", "c9")
+    hidden = _affects(_bf("c1", None), "c2", "c9")
     offenders = _leaks(tmp_path, [([], [SELF, hidden, _bf("c2", "Bear")])])
     assert "affects edge from hidden token in opp_battlefield" in offenders
     assert offenders.get("affects edge to an absent token") == 1
 
 
 def test_choices_on_face_down_or_redacted_tokens_are_leaks(tmp_path: Path) -> None:
-    morph = _bf("c1", "HIDDEN", face_down=True, chosen_player="p0")
+    morph = _bf("c1", None, face_down=True, chosen_player="p0")
     own_morph = _bf("c2", "Leonin", zone="self_battlefield", face_down=True, chosen_type="Elf")
     offenders = _leaks(tmp_path, [([], [SELF, morph, own_morph])])
     assert sum(v for k, v in offenders.items() if k.startswith("choice on face-down")) == 2
@@ -235,7 +255,7 @@ def test_layout_flags_misplaced_keys_false_flags_and_object_ids() -> None:
                        "ability": "Soul-Scar Mage (124): Prowess [Card: Kumano Faces Kakkazan (94)]"})
     assert validate_dump.check_layout([misplaced, false_flag, old_style, dict(SELF, components={})]) == {
         "component at top level: tapped": 1,
-        "identity/ref key in components: card_id": 1,
+        "top-level key in components: card_id": 1,
         "false flag emitted: game_object.tapped": 1,
         "object id in string component: ability": 1,
         "empty components": 1,

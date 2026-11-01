@@ -37,12 +37,13 @@ class Card:
 class KeyInfo:
     key: str
     description: str
-    value_kind: str  # number | flag | string | string_list | ref | identity ("unknown" if derived)
+    value_kind: str  # number | flag | string | string_list | categorical | ref | identity ("unknown" if derived)
     token_types: list[str]
     registered: bool  # False: described by a pattern or derived from the key's name
     source: str  # registry | pattern | derived
     notes: str
     vector: np.ndarray | None  # None for identity keys (not model components)
+    vocab: str | None = None  # categorical keys: the closed vocabulary their values come from
 
 
 def _decode(vec) -> np.ndarray | None:
@@ -143,7 +144,8 @@ class CatalogClient:
 
     def _key_info(self, res: dict) -> KeyInfo:
         return KeyInfo(res["key"], res["description"], res["value_kind"], res["token_types"],
-                       res["registered"], res["source"], res.get("notes", ""), _decode(res.get("vector")))
+                       res["registered"], res["source"], res.get("notes", ""), _decode(res.get("vector")),
+                       res.get("vocab"))
 
     def embed_keys(self, keys: list[str]) -> dict[str, KeyInfo]:
         """Describe and embed any keys, registered or not. Unregistered keys

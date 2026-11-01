@@ -370,7 +370,7 @@ public class AffectsVisibilityCheck {
         var vis = StateExtractor.class.getDeclaredMethod("isVisibleObject", StateExtractor.Tok.class);
         vis.setAccessible(true);
         String[][] cases = {
-            {"opp_battlefield", "Bear"}, {"opp_battlefield", "HIDDEN"},
+            {"opp_battlefield", "Bear"}, {"opp_battlefield", null},
             {"opp_hand", "Bear"}, {"self_hand", "Bear"}, {"self_library", "Bear"},
             {"opp_sideboard", "Bear"}, {"opp_graveyard", "Bear"},
         };
@@ -388,7 +388,7 @@ public class AffectsVisibilityCheck {
     assert tokens[0] == {"type": "game_object", "zone": "self_battlefield", "components": {
         "gained": ["This creature can't block.", 'Say "hi"'], "colors": []}}
     assert tokens[1] == {
-        "opp_battlefield/Bear": True, "opp_battlefield/HIDDEN": False,
+        "opp_battlefield/Bear": True, "opp_battlefield/null": False,
         "opp_hand/Bear": False, "self_hand/Bear": True, "self_library/Bear": False,
         "opp_sideboard/Bear": False, "opp_graveyard/Bear": True,
     }
@@ -415,6 +415,7 @@ def test_top_level_classification_matches_key_catalog(bridge: dict) -> None:
     suffixes, regexes) only admits identity/ref keys."""
     registry = load_registry()
     samples = {k: e.value_kind for k, e in registry.keys.items()}
+    forced_top = {k for k, e in registry.keys.items() if e.top_level}
     for p in registry.patterns:
         key = re.sub(r"\{(\w+)\}", lambda m: _SLOT_SAMPLES[m.group(1)], p.pattern)
         assert registry.resolve(key)[1].pattern == p.pattern, key
@@ -426,7 +427,8 @@ def test_top_level_classification_matches_key_catalog(bridge: dict) -> None:
         samples.setdefault(key, registry.resolve(key)[1].value_kind)
 
     java = _classify(sorted(samples))
-    wrong = sorted(k for k, kind in samples.items() if java[k] != (kind in TOP_LEVEL_KINDS))
+    wrong = sorted(k for k, kind in samples.items()
+                   if java[k] != (kind in TOP_LEVEL_KINDS or k in forced_top))
     assert not wrong, (
         "Java Schema.isTopLevel disagrees with keys.json (identity/ref => top level) for: "
         + ", ".join(f"{k} ({samples[k]}, java top={java[k]})" for k in wrong)

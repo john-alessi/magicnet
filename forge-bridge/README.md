@@ -154,8 +154,15 @@ AI-only runs keep `baseline`. Set the property explicitly to override.
   `Match` for every game type (wishes and companions draw from it), and is
   emitted as `self_sideboard` (named, one token per card) / `opp_sideboard`
   (cards `CardView.canBeShownTo` allows are named with `revealed: true`; the
-  rest collapse into one `library_card` token `name: HIDDEN, count: N`, like
+  rest collapse into one unnamed `library_card` token with `count: N`, like
   the hidden remainder of an opponent library, since schema 5).
+- Schema 12: a card the viewer may not see has **no** `name`/`oracle_id`/`state`
+  (redacted hand and sideboard cards, face-down opponent permanents, the
+  opponent library/sideboard `count` aggregates), and a history card role keeps
+  only `<role>_id` (no `<role>` name or `<role>_oracle_id`), instead of the
+  former literal `HIDDEN` / `<hidden>`. Per the rules an unseen card has no
+  name, and absence means unknown as for every other key. The controller of a
+  face-down permanent still sees its name. Test with `magicnet.dump.is_hidden`.
   That check reads `PlayerView` opponent lists, which only `HostedMatch`
   fills in, so `Harness` calls `updateOpponentsForView()` itself.
 - Forge has no reveal event: reveals arrive only as `PlayerController.reveal`
@@ -196,7 +203,7 @@ AI-only runs keep `baseline`. Set the property explicitly to override.
   opponent permanent), no self-loops, duplicates collapsed. Restriction-style
   statics (Pacifism, Pithing Needle) are not "Continuous" in Forge and get no
   edge. `validate_dump.py` rejects `affects` edges touching hidden tokens and
-  choice props on face-down/redacted tokens.
+  choice props on face-down/unnamed tokens.
 - Schema 9 token layout: a token's top level holds only `type`, `zone`,
   `edges` and the keys `src/magicnet/catalog/keys.json` classifies `identity`
   or `ref` (`id`, `name`, `oracle_id`, `*_id`, `*_player`, `source`, `card`,

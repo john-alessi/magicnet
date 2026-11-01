@@ -1,5 +1,6 @@
 import torch
 from .constants import *
+from ..schema import ZONES
 
 def load_data(
     state: list[dict],
@@ -14,12 +15,14 @@ def load_data(
         [
             c['name']
             for c in state
-            if c['type'] in ['game_object'] and c['name'] != 'HIDDEN'
+            if 'name' in c and c['type'] in ['game_object'] and c['name'] != 'HIDDEN'
         ]
     )
     card_metadata = catalog.lookup(card_names)
 
     for i,gobj in enumerate(state):
+        if 'zone' in gobj:
+            components += [('zone', gobj['zone'], 'zone', i)]
         if 'components' in gobj:
             for k,v in gobj['components'].items():
                 if k == 'colors':
@@ -68,9 +71,16 @@ def load_data(
         if kd == 'color' 
     ])
 
+    packed_categoricals = torch.tensor([
+        list(key_embeddings[k]) + [CATEGORICALS[k].index(v), list(CATEGORICALS).index(k), i]
+        for (k,v,kd,i) in components
+        if kd in CATEGORICALS.keys()
+    ])
+
     return {
         'scalars': packed_scalars,
         'vectors': packed_vectors,
         'colors': packed_colors,
         'flags': packed_flags,
+        'categoricals': packed_categoricals,
     }

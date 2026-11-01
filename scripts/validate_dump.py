@@ -12,6 +12,8 @@ Runs the checks that have to pass before a dump is trustworthy:
    accounts for it, no ``Reveal`` history token names a card to a player who
    was not shown it, and no move out of a hidden or face-down origin names a
    card the viewer could not see.
+   Schema 12: hidden means unnamed (``magicnet.dump.is_hidden``); a hidden
+   card or history role never carries an ``oracle_id``.
    Schema 7: ``affects`` edges must join two tokens the viewer can see, and
    choice props (chosen colour/type/player/number, named card, X, kicked)
    never sit on a face-down or redacted token, and a chosen player is one of
@@ -39,13 +41,14 @@ from collections import Counter
 from pathlib import Path
 
 from magicnet.dump import (
-    SchemaError, comp, flatten, load, resolve_edges, strip_ids, strip_option_ids, summarise,
+    SchemaError, comp, flatten, is_hidden, load, resolve_edges, strip_ids, strip_option_ids,
+    summarise,
 )
 from magicnet.catalog.keys import load_registry
 from magicnet.schema import COMPONENTS
 
 # Zones whose contents are hidden from a player who does not own them. The
-# extractor redacts these to a sentinel name; a *real* card name appearing here
+# extractor omits the name (schema 12); any card name appearing here
 # is an information leak, which is the one class of bug that silently makes a
 # trained policy cheat. The viewer's own library is not included: per the
 # library representation design it is derivable from public information
@@ -66,10 +69,6 @@ REVEALABLE_ZONES = frozenset({"opp_sideboard"})
 # That is checked from the dump alone, independently of the Java bookkeeping
 # that set the mark.
 KNOWN_BY_REVEAL_ZONES = frozenset({"opp_hand"})
-
-# What the extractor writes in place of a card name it must not reveal.
-REDACTED = "HIDDEN"
-
 
 def check_option_ids(decisions) -> list[str]:
     """Options must not carry raw object ids.
@@ -103,10 +102,9 @@ def _viewer_ref(state: list[dict]) -> str | None:
 # public, so the history names it (unless it was face-down) and the viewer may
 # keep knowing it while it stays there.
 PUBLIC_ZONES = frozenset({"Battlefield", "Graveyard", "Stack", "Exile", "Command"})
-HIDDEN = "<hidden>"
 
 # State zones whose tokens tell us whether the viewer could see a card there. A
-# public zone redacts a card to HIDDEN only when it is face-down and the viewer
+# public zone omits a card's name only when it is face-down and the viewer
 # may not look at it, so the name in the viewer's latest state is independent
 # evidence of whether a face-down departure was visible to them.
 _PUBLIC_STATE_ZONES = frozenset(
@@ -150,8 +148,9 @@ class _HandKnowledge:
 
     def observe(self, state: list[dict]) -> None:
         for tok in state:
-            if tok.get("zone") in _PUBLIC_STATE_ZONES and "id" in tok and "name" in tok:
-                self.looked[tok["id"]] = tok["name"] != REDACTED
+            if (tok.get("zone") in _PUBLIC_STATE_ZONES and "id" in tok
+                    and tok.get("type") == "game_object"):
+                self.looked[tok["id"]] = not is_hidden(tok)
 
     def _step(self, ev: dict) -> None:
         kind = comp(ev, "event")
@@ -169,7 +168,7 @@ class _HandKnowledge:
         elif kind == "CardChangeZone":
             self.known.pop(ref, None)
             was = self.pending.pop(ref, None)
-            named = ev.get("card") != HIDDEN
+            named = not is_hidden(ev, "card")
             src, dst, face_down = comp(ev, "from"), comp(ev, "to"), comp(ev, "face_down")
             seen = src in PUBLIC_ZONES and (not face_down or self.looked.get(ref) is True)
             if (named and not seen and face_down
@@ -200,7 +199,7 @@ def _visible_endpoint(tok: dict) -> bool:
         return True
     zone = tok.get("zone") or ""
     return (tok.get("type") == "game_object" and comp(tok, "count") is None
-            and tok.get("name") not in (None, REDACTED)
+            and not is_hidden(tok)
             and zone not in HIDDEN_OPPONENT_ZONES and not zone.endswith("_library"))
 
 
@@ -221,7 +220,7 @@ def check_board_relations(tokens: list[dict], edges: list[list[tuple[str, int]]]
             if not _visible_endpoint(tokens[j]):
                 offenders[f"affects edge to hidden token in {tokens[j].get('zone')}"] += 1
         chosen = CHOICE_PROPS.intersection(flatten(tok))
-        if chosen and (comp(tok, "face_down") or tok.get("name") in (None, REDACTED)):
+        if chosen and (comp(tok, "face_down") or tok.get("name") is None):
             offenders[f"choice on face-down/redacted token: {sorted(chosen)}"] += 1
         if "chosen_player" in tok and tok["chosen_player"] not in players:
             offenders["chosen_player is not a player token"] += 1
@@ -261,7 +260,7 @@ def ability_text_problems(tok: dict) -> list[str]:
     """
     host = tok.get("name")
     types = comp(tok, "types") or ""
-    if host in (None, "", REDACTED) or comp(tok, "token") or "Basic" in types:
+    if not host or comp(tok, "token") or "Basic" in types:
         host = None
     out = []
     for key in ABILITY_TEXT_KEYS:
@@ -281,9 +280,9 @@ class _Kinds(dict):
         super().__init__()
         self.registry = load_registry()
 
-    def __missing__(self, key: str) -> str:
-        kind = self[key] = self.registry.resolve(key)[1].value_kind
-        return kind
+    def __missing__(self, key: str) -> bool:
+        top = self[key] = self.registry.is_top_level(key)
+        return top
 
 
 def check_layout(tokens: list[dict], kinds: _Kinds | None = None) -> Counter:
@@ -294,7 +293,7 @@ def check_layout(tokens: list[dict], kinds: _Kinds | None = None) -> Counter:
     problems: Counter = Counter()
     for tok in tokens:
         for key in tok:
-            if key != COMPONENTS and kinds[key] not in TOP_LEVEL_KINDS:
+            if key != COMPONENTS and not kinds[key]:
                 problems[f"component at top level: {key}"] += 1
         components = tok.get(COMPONENTS)
         if components is None:
@@ -302,8 +301,8 @@ def check_layout(tokens: list[dict], kinds: _Kinds | None = None) -> Counter:
         if not components:
             problems["empty components"] += 1
         for key, value in components.items():
-            if kinds[key] in TOP_LEVEL_KINDS:
-                problems[f"identity/ref key in components: {key}"] += 1
+            if kinds[key]:
+                problems[f"top-level key in components: {key}"] += 1
             if value is False and (tok.get("type"), key) not in FALSE_FLAG_OK:
                 problems[f"false flag emitted: {tok.get('type')}.{key}"] += 1
             for text in value if isinstance(value, list) else [value]:
@@ -357,9 +356,14 @@ def check_leaks(path: Path, limit: int) -> tuple[int, Counter]:
             zone = tok.get("zone")
             name = tok.get("name")
             event = comp(raw, "event")
+            # An unnamed card or role must not be identified some other way.
+            for key in raw:
+                if key.endswith("oracle_id") and is_hidden(raw, key[:-len("oracle_id")].rstrip("_") or None):
+                    leaks += 1
+                    offenders[f"{key} on hidden {raw.get('type')} in {zone}"] += 1
             if (event == "CardChangeZone" and comp(raw, "to") in ("Hand", "Library")
                     and raw.get("to_player") != viewer and comp(raw, "from") not in PUBLIC_ZONES
-                    and raw.get("card") != HIDDEN):
+                    and not is_hidden(raw, "card")):
                 # Into an opponent's hidden zone from a hidden one: nobody else
                 # saw which card moved. (A reveal is a separate Reveal token.)
                 leaks += 1
@@ -370,7 +374,7 @@ def check_leaks(path: Path, limit: int) -> tuple[int, Counter]:
                 # The owner already knows their own cards -- except in their
                 # library, which is hidden from them too.
                 owner_sees = raw.get("owner") == viewer and comp(raw, "revealed_from") != "Library"
-                if (raw.get("card") != "<hidden>" and raw.get("shown_to") != viewer
+                if (not is_hidden(raw, "card") and raw.get("shown_to") != viewer
                         and not owner_sees):
                     leaks += 1
                     offenders[f"Reveal named to a bystander: {raw.get('card')}"] += 1
@@ -386,12 +390,9 @@ def check_leaks(path: Path, limit: int) -> tuple[int, Counter]:
                 leaks += 1
                 offenders[f"known_by_reveal without a recorded cause in {zone}: {name}"] += 1
                 continue
-            if name is not None and name != REDACTED:
+            if not is_hidden(raw):
                 leaks += 1
                 offenders[f"unredacted name in {zone}: {name}"] += 1
-            elif "oracle_id" in tok:
-                leaks += 1
-                offenders[f"oracle_id on redacted card in {zone}"] += 1
         hk.observe(dec.state)
     for hk in replay.values():
         leaks += sum(hk.problems.values())

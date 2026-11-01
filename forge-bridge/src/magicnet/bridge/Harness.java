@@ -288,7 +288,7 @@ public final class Harness {
      * a library-to-hand CardChangeZone would expose the card the opponent drew.
      * Each dumped state is from one viewer's perspective and names the opposing
      * player, so any history token moving a card into that player's hand must
-     * have had its name redacted.
+     * have had its name omitted.
      *
      * This is a real assertion rather than a count, because in self-play both
      * agents share a process and a leak would be silent and fatal to training.
@@ -328,7 +328,7 @@ public final class Harness {
                     }
                     checked++;
                     String name = field(ln, "card");
-                    if (name != null && !EventTokenizer.HIDDEN.equals(name)) {
+                    if (name != null) {
                         leaks++;
                         if (firstLeak == null) {
                             firstLeak = f.getName() + ": " + ln;

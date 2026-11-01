@@ -107,6 +107,9 @@ emitted token: `identity` and `ref` keys at the top level, everything else under
 the token's `components` object (omitted when empty; flags only when true).
 `magicnet.bridge.Schema.isTopLevel` implements the split and
 `tests/test_schema.py` checks it agrees with this registry in both directions.
+Since schema 12 a card the viewer cannot see has no `name`/`oracle_id` (a
+history role keeps only `<role>_id`): absence means unknown, so no placeholder
+name is ever embedded (`magicnet.dump.is_hidden`).
 
 `patterns` describe dynamic families (`ctr_{name}`, `announce_{what}`,
 `target_{i}`, `card{i}`, `{role}_id`, `{role}_oracle_id`, `{role}_player`).

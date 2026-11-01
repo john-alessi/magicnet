@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 KEYS_PATH = HERE / "keys.json"
 COUNTERS_PATH = HERE / "counter_keys.json"
 
-VALUE_KINDS = ("number", "flag", "string", "string_list", "ref", "identity")
+VALUE_KINDS = ("number", "flag", "string", "string_list", "categorical", "ref", "identity")
 # Placeholder -> regex. Anything else matches one or more characters.
 _SLOTS = {"i": r"\d+", "role": r"[a-z][a-z0-9_]*?"}
 
@@ -38,6 +38,8 @@ class KeyEntry:
     notes: str = ""
     alt_value_kinds: tuple[str, ...] = ()
     pattern: str | None = None  # family this key was expanded from / matched by
+    vocab: str | None = None  # categorical: name of the closed vocabulary its values come from
+    top_level: bool = False  # emitted at the token's top level although it is a component
 
     @property
     def embedded(self) -> bool:
@@ -46,7 +48,8 @@ class KeyEntry:
 
     def meta(self) -> dict:
         return {k: v for k, v in (("notes", self.notes), ("alt_value_kinds", list(self.alt_value_kinds)),
-                                   ("pattern", self.pattern)) if v}
+                                   ("pattern", self.pattern), ("vocab", self.vocab),
+                                   ("top_level", self.top_level)) if v}
 
     def to_json(self) -> dict:
         return {"key": self.key, "description": self.description, "value_kind": self.value_kind,
@@ -123,6 +126,13 @@ class Registry:
                 return "pattern", hit
         return "derived", KeyEntry(key, derive_description(key), "unknown", ())
 
+    def is_top_level(self, key: str) -> bool:
+        """Whether the bridge writes this key at the token's top level rather
+        than under ``components``: identity and ref keys, plus components
+        flagged ``top_level`` (e.g. ``zone``, which is also structural)."""
+        entry = self.resolve(key)[1]
+        return entry.value_kind in ("identity", "ref") or entry.top_level
+
     def entries(self) -> list[dict]:
         """Flat rows for the store: concrete keys, then patterns."""
         rows = [{"key": e.key, "is_pattern": False, "description": e.description, "value_kind": e.value_kind,
@@ -158,8 +168,11 @@ def load_registry(keys_path: Path = KEYS_PATH, counters_path: Path = COUNTERS_PA
             _check(alt, k["key"])
         if k["key"] in keys:
             raise ValueError(f"duplicate key {k['key']!r} in {keys_path}")
+        if (k["value_kind"] == "categorical") != ("vocab" in k):
+            raise ValueError(f"{k['key']}: categorical keys (and only they) must name a vocab")
         keys[k["key"]] = KeyEntry(k["key"], k["description"], k["value_kind"], tuple(k["token_types"]),
-                                  k.get("notes", ""), tuple(k.get("alt_value_kinds", ())))
+                                  k.get("notes", ""), tuple(k.get("alt_value_kinds", ())),
+                                  vocab=k.get("vocab"), top_level=bool(k.get("top_level", False)))
     patterns = []
     for p in raw["patterns"]:
         _check(p["value_kind"], p["pattern"])
@@ -189,7 +202,8 @@ def registry_from_rows(rows: list[dict]) -> Registry:
     """Rebuild a Registry from ``CatalogStore.keys_at`` rows (a pinned version)."""
     keys = {
         r["key"]: KeyEntry(r["key"], r["description"], r["value_kind"], tuple(r["token_types"]),
-                           r.get("notes", ""), tuple(r.get("alt_value_kinds", ())), r.get("pattern"))
+                           r.get("notes", ""), tuple(r.get("alt_value_kinds", ())), r.get("pattern"),
+                           r.get("vocab"), bool(r.get("top_level", False)))
         for r in rows if not r["is_pattern"]
     }
     patterns = [

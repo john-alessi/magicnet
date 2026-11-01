@@ -33,6 +33,15 @@ view::
      "name": "Soul-Scar Mage", "oracle_id": "...", "edges": [...],
      "components": {"power": 6, "toughness": 5, "tapped": true, "ctr_+1/+1": 1}}
 
+Hidden cards have no name (schema 12)
+-------------------------------------
+A card the viewer may not see carries no ``name`` and no ``oracle_id``: per
+the rules an unseen or face-down card has no name, and an absent key means
+unknown. That holds for state tokens (redacted hand/sideboard cards, face-down
+opponent permanents, the ``count`` aggregates of an opponent's unseen library
+and sideboard) and for history roles, which then keep only ``<role>_id``. Test
+with :func:`is_hidden`, never by comparing names.
+
 Ids are join keys, not features
 -------------------------------
 Token ``id`` properties exist only to resolve ``edges`` to token indices. They
@@ -54,7 +63,7 @@ from magicnet.schema import COMPONENTS
 
 # Bumped by the Java side on any change that alters the meaning of an existing
 # field. Refuse unknown schemas rather than silently misreading them.
-SUPPORTED_SCHEMA = 11
+SUPPORTED_SCHEMA = 12
 
 # ``api`` of the explicit "pass priority" option. Present (always last) only on
 # decisions where passing is legal; there is no sentinel value for passing.
@@ -83,6 +92,26 @@ _CARD_REF = re.compile(r"^c\d+$")
 
 def _is_card_ref(value: object) -> bool:
     return isinstance(value, str) and _CARD_REF.match(value) is not None
+
+
+# Token types that stand for cards and are named when the viewer can see them.
+CARD_TOKEN_TYPES = frozenset({"game_object", "library_card"})
+
+
+def is_hidden(tok: dict, role: str | None = None) -> bool:
+    """Whether *tok* (or, for a history token, its card *role* such as
+    ``"card"``/``"source"``/``"target_0"``) is a card the viewer cannot see.
+
+    Hidden means unnamed (schema 12): a card-type state token without ``name``,
+    or a history role without its name (``<role>_id`` may still be present). A
+    role the token does not have at all is trivially unnamed, so this is also
+    the "nothing about this card is revealed" test for leak checks.
+    """
+    if role is None:
+        return tok.get("type") in CARD_TOKEN_TYPES and "name" not in tok
+    # A role key the registry classifies as a component (CardAttachment's
+    # "to") holds the name under ``components``.
+    return role not in tok and role not in tok.get(COMPONENTS, {})
 
 
 def comp(tok: dict, key: str, default=None):

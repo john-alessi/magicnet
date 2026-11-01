@@ -64,9 +64,6 @@ import forge.game.zone.ZoneView;
  */
 public final class EventTokenizer extends IGameEventVisitor.Base<StateExtractor.Tok> {
 
-    /** Marker written in place of a name the viewer is not entitled to see. */
-    public static final String HIDDEN = "<hidden>";
-
     private final PlayerView viewer;
 
     /**
@@ -105,8 +102,9 @@ public final class EventTokenizer extends IGameEventVisitor.Base<StateExtractor.
     }
 
     /**
-     * Attaches a card under a role, redacting the name when the viewer may not
-     * see it. The id is always kept: it is a join key for debugging and for edge
+     * Attaches a card under a role, omitting the name (and oracle id) when the
+     * viewer may not see it: an unseen card has no name, and absence means
+     * unknown, as everywhere else in the schema. The id is always kept: it is a join key for debugging and for edge
      * resolution, and by the earlier argument it never needs to reach the
      * embedding, since two objects identical in every visible property and edge
      * are genuinely interchangeable.
@@ -130,7 +128,6 @@ public final class EventTokenizer extends IGameEventVisitor.Base<StateExtractor.
             t.p(role, c.getName());
             t.p(role + "_oracle_id", OracleIds.of(c));
         } else {
-            t.p(role, HIDDEN);
             redactions++;
         }
         return t;
@@ -259,7 +256,6 @@ public final class EventTokenizer extends IGameEventVisitor.Base<StateExtractor.
             t.p("card", c.getName());
             t.p("card_oracle_id", OracleIds.of(c));
         } else {
-            t.p("card", HIDDEN);
             redactions++;
         }
         // Not "zone": every history token already carries zone="history", and a

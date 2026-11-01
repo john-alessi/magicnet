@@ -60,8 +60,11 @@ public final class Serializer {
      * text differing from the printed card) instead of {@code kw},
      * {@code kw_granted} and {@code abilities_removed}; creatures carry
      * {@code base_power}/{@code base_toughness}.
+     * 12: a card the viewer may not see carries no {@code name} or
+     * {@code oracle_id} (state tokens) and history roles keep only
+     * {@code <role>_id}, instead of the literal "HIDDEN" / "&lt;hidden&gt;".
      */
-    public static final int SCHEMA = 11;
+    public static final int SCHEMA = 12;
 
     /** A priority decision: which spell or ability to play. */
     public static final String KIND_ABILITY = "ability";

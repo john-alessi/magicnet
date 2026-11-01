@@ -390,15 +390,15 @@ public final class StateExtractor {
                 // Hidden opponent sideboard cards collapse to one count, exactly
                 // like the hidden remainder of an opponent library and for the
                 // same reason: unseen copies share no distinguishing fact, so N
-                // identical HIDDEN tokens carry what one count=N token does.
+                // identical nameless tokens carry what one count=N token does.
                 // Typed library_card rather than game_object because the type
                 // denotes the schema, not the zone: library_card is the
                 // (identity, count[, position]) aggregate, while a game_object
                 // is one object with instance state and an id that edges and
                 // options resolve to -- a count=15 game_object would break that.
                 // No position: the sideboard is unordered.
+                // No name: an unseen card has none, and absence means unknown.
                 out.add(new Tok("library_card", zoneName)
-                        .p("name", "HIDDEN")
                         .p("count", hiddenSideboard));
             }
         } catch (Throwable ignored) {
@@ -528,7 +528,6 @@ public final class StateExtractor {
 
         if (!self) {
             out.add(new Tok("library_card", zoneName)
-                    .p("name", "HIDDEN")
                     .p("count", unknown));
             return;
         }
@@ -573,11 +572,11 @@ public final class StateExtractor {
 
             // Redaction happens HERE, at extraction, not at embedding. A hidden card
             // must never have its name written into the intermediate record, or the
-            // log itself becomes a leak path.
+            // log itself becomes a leak path. A hidden card gets no name at all
+            // (nor oracle id or state): per the rules a face-down or unseen card
+            // has no name, and an absent key means unknown.
             boolean hidden = !visible && (z == ZoneType.Hand || z == ZoneType.Sideboard);
-            if (hidden || (c.isFaceDown() && !visible)) {
-                t.p("name", "HIDDEN");
-            } else {
+            if (!hidden && !(c.isFaceDown() && !visible)) {
                 t.p("name", c.getName());
                 t.p("oracle_id", OracleIds.of(c));
                 t.p("state", String.valueOf(c.getCurrentStateName()));
@@ -873,7 +872,7 @@ public final class StateExtractor {
 
     private static boolean isVisibleObject(Tok t) {
         Object name = t.props.get("name");
-        if (name == null || "HIDDEN".equals(name)) {
+        if (name == null) {
             return false;
         }
         String z = t.zone;
