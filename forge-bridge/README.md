@@ -29,6 +29,8 @@ That same seam is how the policy will eventually be plugged in.
 | `InstrumentedLobbyPlayer.java` | `LobbyPlayer` + `IGameEntitiesFactory`; mirrors `forge.ai.LobbyPlayerAi` |
 | `DecisionLog.java` | Thread-safe aggregation, branching-factor histograms, CSV output |
 | `Harness.java` | Forge bootstrap, deck loading, game loop |
+| `HistoryHub.java` | Game history, once per game: Forge events -> events with causes and steps |
+| `GameHistory.java` | One viewer's history tokens, tracking handles, phantoms (schema 13) |
 
 The overrides are generated rather than hand-written so they stay correct across
 Forge upgrades: re-run `build.sh` and the compiler reports anything that moved.
@@ -118,13 +120,166 @@ routed when deciding but not recorded when observing. Spell targets are not
 routed (the AI picks them on the engine cast path too). `fixtures/trig` is a
 flicker/ETB-target/cast-trigger mirror for exercising this.
 
-## Casting attempts in history
+## History (schemas 13-14)
+
+`HistoryHub` builds each game's history once, from Forge's event bus, and every
+viewer's `GameHistory` renders it -- redacted when the event fires, so nothing
+seen later leaks backwards and nothing seen earlier is forgotten. Each history
+token is **one event**: `verb [modifiers] {participants}`.
+
+```
+{"type":"history","zone":"history","id":"e45",
+ "edges":[{"rel":"actor","to":"p0"},{"rel":"stack_object","to":"h17"},
+          {"rel":"source_is","to":"h15"},{"rel":"cause","to":"e43"}],
+ "components":{"verb":"trigger","turn":3,"phase":"MAIN1","step":21,"step_order":0,
+               "ability":"Whenever an opponent draws a card, they lose 2 life.",
+               "cause_kind":"pointer"}}
+```
+
+- `id` `e<N>` is the event's index in this viewer's history: other tokens point at it.
+- Always present: `verb`, `turn`, `phase` (Forge PhaseType, `NONE` pregame),
+  `step` (one per atomic game action -- a resolution, a cast/activation with its
+  costs, a combat-damage batch, a state-based check, a turn-based action; a
+  simultaneous batch shares it) and `step_order` within it, `cause_kind`.
+- Participants are **edges whose relation is the role**, to a player `p<N>`,
+  an event `e<N>`, or a tracking handle `h<N>` (below) -- never a card id or
+  name. A participant the viewer cannot identify (the opponent's draw) has no
+  edge at all.
+
+| verb | modifiers | roles |
+|---|---|---|
+| `move_zone` | `from`, `to` (viewer-relative zone), `move_kind` (put/mill/exile/sacrifice/destroy/bounce/search/return/other), `count`, `face_down` | `obj`*, `player`, `cause`, `replaced_by` |
+| `draw` | `from`, `to`, `count` | `obj`* (only cards this viewer sees), `player`, `cause` |
+| `discard` | `from`, `to`, `count` | `obj`*, `player`, `cause` |
+| `create` | `to`, `count` | `obj`*, `actor`, `cause` |
+| `play_land` | | `actor`, `obj` |
+| `cast` / `copy_spell` | `modes`, `x_paid`, `kicked`, `mana_spent_W/U/B/R/G/C` | `actor`, `stack_object`, `source_is`, `target_0..3`, `target_more`, `cause` |
+| `activate` | `ability`, `mana_spent_*` | same |
+| `trigger` | `ability`, `modes` | `actor`, `stack_object`, `source_is`, `target_i`, `cause`* (the triggering events) |
+| `special_action` | `action_kind` (turn_face_up, foretell, plot, unlock, or the ability api: a companion is `changezone`) | `actor`, `source_is` |
+| `resolve` | | `actor`, `stack_object`, `source_is`, `cause` (the cast/trigger that put it there) |
+| `does_not_resolve` | `reason` (countered/fizzled/removed) | `stack_object`, `cause` (countered: the counterspell's `resolve`) |
+| `declare_attacker` | | `attacks`, `defender` |
+| `declare_blockers` | | `attacks`, `blocks`* (one event per blocked attacker) |
+| `deal_damage` | `amount`, `combat` | `source_is`, `target_0`, `cause` |
+| `life_change` | `before`, `after` | `player`, `cause`* (all the damage of a batch) |
+| `counters_change` | `counter_type`, `before`, `after` | `obj` or `player`, `cause` |
+| `change_control` | | `obj`, `old_controller`, `new_controller`, `cause` |
+| `reveal` | `from`, `count` | `obj`* (recipient, or a viewer who can see them), `player` (shown to), `cause` |
+| `scry` / `surveil` | `n_top`, `n_bottom` / `n_graveyard` | `player`, `cause` |
+| `shuffle` | | `player`, `cause` |
+| `mulligan` | `hand_size` | `player` |
+| `designation_change` | `designation` (monarch, initiative, city's blessing, speed, day, night), `before`, `after` | `player`, `cause` |
+| `attach` | | `obj`, `attached_to` (absent: unattached), `cause` |
+| `attempt_end` | `outcome`, `reached`, `announce_*` | `actor`, `stack_object`, `source_is`, `target_i` |
+
+Relations `source_is`, `attacks`, `defender`, `blocks` and `attached_to` are
+reused from earlier schemas with the same meaning. Moves the event of their own
+already covers are folded: the hand-to-stack move of a cast, the land's move of
+a land play, the TokenCreated / CardDestroyed / CardSacrificed /
+CardModeChosen events (into `create`, `move_kind`, `modes`), PlayerPoisoned (a
+duplicate of the counter change). Consecutive identical moves (an opening hand,
+a mill, a board wipe, the cards of one draw) are one event with `count` and one
+`obj` edge per card the viewer sees. Per-card scry/surveil reorders inside a
+library reach only the player who can tell which card moved; others get the
+`scry`/`surveil` summary. Not mapped (counted in the coverage report):
+CardPhased, CardRegenerated, FlipCoin, RollDie (Forge puts no outcome on the
+last two); turns, phases and priority passes stay implicit, mana abilities are
+not events.
+
+### Why it happened: `cause` and `cause_kind`
+
+Forge's events never say why; the hub recovers it as each event fires
+(`HistoryHub` javadoc): the **resolution** in progress (the stack ability
+snapshotted at the resolution's first event and closed by its own
+`SpellRemovedFromStack`, so the spell's own move to the graveyard counts and a
+cast-from-effect does not hijack it; copies pushed just after are caused by it);
+a **static trigger** run through `playTrigger`; the **casting attempt** (costs
+are held back and emitted after the `cast`/`activate` they pay for);
+**replacement** effects (`ReplacementHandler.hasRun`, read by reflection) add a
+`replaced_by` edge on top of the cause; **triggers** are matched per mode
+(Drawn, ChangesZone(All), SpellCast, BecomesTarget, CounterAdded, DamageDone,
+Attacks, Blocks, LifeLost, BecomeMonarch, ...) to the events in their
+triggering objects; a life change or counter change points at the damage that
+caused it. `cause_kind` is on every token: `pointer` when the `cause` edges
+explain it, otherwise the rule category -- `player_action`, `combat`,
+`pregame`, and by a stack walk (only for events nothing else classified)
+`state_based` or `turn_based`, else `unknown`. A state-based death also points
+at the damage that made it lethal. Causes are events of the same viewer's
+history, never card identities: the triggering objects of Sheoldred's trigger
+include the opponent's hidden draw, and its cause edge is just `e<N>` of a
+`draw` with no `obj`. Schema 14: text components (`ability`, `modes`, phantom `ability`/`name`) are
+normalized by `EventTokenizer.normalize`: no `(id)`s, player names replaced by
+"a player", and Forge's trailing bracketed run context ("[Zone Changer: X]",
+"[Player: P0-<deck>]") dropped -- objects there are edges already, and the
+harness player name embeds the deck name. `validate_dump.py` flags player names
+and bracketed context in any string component.
+`HistoryHub.printCoverage()` reports matched/unmatched
+triggers by mode, stack-walk count and cost; `-Dmagicnet.history.walkdebug=true`
+prints the frames of every walked event.
+
+### Tracking handles
+
+History is append-only and delta-encoded, so an event's edges are frozen when
+written; they must still follow the object. History edges therefore point at
+per-viewer **tracking handles**, one per physical object the viewer can
+follow, and every state lists each handle the history has referenced in the
+top-level `handles` of exactly one token:
+
+1. the object's own token if the viewer can see it (battlefield, graveyard,
+   exile -- face-down too --, the stack item of a spell, its own hand, an
+   opponent hand card `known_by_reveal`, a library card at a known position);
+2. the aggregate of the hidden zone it is known to be in: an opponent's
+   unseen hand cards are now one `library_card` `count` token in `opp_hand`
+   (individual nameless hand tokens carried nothing but an id, and assigning a
+   handle to one would say *which* unseen card it is), the opponent library
+   aggregate, or the name histogram token of the viewer's own library;
+3. once the viewer **loses track** of it -- a card left the zone it was in and
+   the viewer could not tell which (the opponent draws while it sat in their
+   library; Brainstorm puts two cards back after we bounced it; a card of the
+   same name leaves the hand it was known in): if the viewer knew its identity,
+   an **identity phantom** (below, no `ceased`), so history reads "bounced *a*
+   copy of Mist Raven"; if it never did (face-down), `self_untracked` /
+   `opp_untracked` by owner. Schema 14: this is final. The handle is **never
+   re-linked** to a card of that name seen later -- graph edges would assert an
+   identity the viewer cannot know; the next sighting gets a new handle.
+   `RevealKnowledge` forgets an opponent's known hand cards by the same rule
+   (all of them after an unseen departure, those of the same name after a
+   departure seen arriving face up);
+4. a `phantom` game_object (zone `phantom`) carrying last-known `name`/
+   `oracle_id`, `types`, `power`/`toughness`, `colors`, `token`, `ability` text
+   and `side`: with `ceased: true` once the object ceased to exist (a token that
+   left the battlefield, a copy or an ability that left the stack), deduplicated
+   by (identity, controller); without it for an identity phantom, deduplicated
+   by (identity, owner).
+
+Phantoms (and `*_untracked` tokens) are emitted only while at least one edge
+refers to one of their handles. History is not truncated today, so in practice
+a phantom lasts the rest of the game; once history truncation drops a
+phantom's last referencing event, it disappears from the state on its own.
+
+`magicnet.dump.resolve_edges` resolves `h*` through the `handles` lists and
+`e*` through history ids; `strip_ids` drops both.
+
+### Live modifiers: `affected_by`
+
+Board objects carry `affected_by` edges, recomputed every state: to the source
+token of each continuous static that applies (the reverse of `affects`, which
+is kept: relations are directed) and to the history `resolve` event whose
+continuous effect still applies (Giant Growth's +3/+3, prowess). Effects are
+attributed by scanning the battlefield's non-static P/T, keyword and trait
+tables when a resolution closes. This replaces the schema-7
+`temp_power`/`temp_toughness` heuristic; the harness prints the coverage
+(`=== affected_by -> resolve ===`: every creature with a non-static P/T boost
+has such an edge on the hist, pio and mm fixtures).
+
+### Casting attempts
 
 Every cast or activation is an *attempt*. History events fired during it carry
-`attempt: N`, and it is closed by an `AttemptEnd` token with `actor`, `source`,
-`ability`, any bound `target_i`, `announce_*` values (X, modes), `reached` (the
-furthest casting callback seen for that ability: `proposed`, `announce`,
-`targets`, `cost`) and `outcome`:
+`attempt: N`, and it is closed by an `attempt_end` token with `actor`,
+`stack_object` (if it reached the stack), `source_is`, bound `target_i`,
+`announce_*` values (X, modes), `reached` (the furthest casting callback seen
+for that ability: `proposed`, `announce`, `targets`, `cost`) and `outcome`:
 
 | outcome | meaning | its tagged events |
 |---|---|---|
@@ -144,8 +299,8 @@ AI-only runs keep `baseline`. Set the property explicitly to override.
 
 ## Gotchas
 
-- Card tokens carry `oracle_id` (and `source_oracle_id` / `<role>_oracle_id` on
-  stack items, actions and history) whenever the card's name is emitted, from
+- Card tokens carry `oracle_id` (and `source_oracle_id` on stack items and
+  actions) whenever the card's name is emitted, from
   a name table built by `uv run scripts/build_oracle_map.py` and loaded from
   `-Dmagicnet.oracle=PATH` (default `../data/processed/oracle_ids.tsv`). Without
   the table the harness warns and omits the field; rebuild it after refreshing
@@ -158,9 +313,9 @@ AI-only runs keep `baseline`. Set the property explicitly to override.
   the hidden remainder of an opponent library, since schema 5).
 - Schema 12: a card the viewer may not see has **no** `name`/`oracle_id`/`state`
   (redacted hand and sideboard cards, face-down opponent permanents, the
-  opponent library/sideboard `count` aggregates), and a history card role keeps
-  only `<role>_id` (no `<role>` name or `<role>_oracle_id`), instead of the
-  former literal `HIDDEN` / `<hidden>`. Per the rules an unseen card has no
+  opponent hand (schema 13)/library/sideboard `count` aggregates), instead of
+  the former literal `HIDDEN` / `<hidden>`. History tokens carry no card names
+  at all since schema 13. Per the rules an unseen card has no
   name, and absence means unknown as for every other key. The controller of a
   face-down permanent still sees its name. Test with `magicnet.dump.is_hidden`.
   That check reads `PlayerView` opponent lists, which only `HostedMatch`
@@ -170,7 +325,7 @@ AI-only runs keep `baseline`. Set the property explicitly to override.
   `RevealKnowledge` records opponent hand cards from that callback as
   `(card id, game timestamp)` per viewer; they are emitted named with
   `known_by_reveal: true` while still in that hand, and every viewer's history
-  gets a `Reveal` token (named only for the recipient). Leaving the hand, or a
+  gets a `reveal` event (with `obj` edges only for the recipient). Leaving the hand, or a
   new timestamp, forgets them. Forge also calls `reveal` for sideboard fetches
   whose card says no reveal (North Wind Avatar, because its `ChangeType` is not
   plain `Card`); those are suppressed. `-Dmagicnet.reveal.debug=1` traces each
@@ -183,15 +338,16 @@ AI-only runs keep `baseline`. Set the property explicitly to override.
   its very next move takes it from that zone into a hand while the same
   ability is still resolving (digs: Silundi Vision, Commune with Spirits --
   Forge reveals first, then moves). Reveals after the move (Granted) find the
-  card already in hand. The move token carries `face_down: true` when the
-  card left face-down. `validate_dump.py` re-derives all three causes from
-  the viewer's own history and rejects any named opponent hand card, or named
-  hidden/face-down departure, that they do not explain.
+  card already in hand. The move event carries `face_down: true` when the
+  card left face-down. Schema 13: a card leaving that hand into a place the
+  viewer cannot see it (Brainstorm's put-back) makes the viewer forget every
+  card it knew there. `validate_dump.py` re-derives all of this from the
+  viewer's own history (by tracking handle) and rejects any named opponent
+  hand card it does not explain.
 - Schema 7 adds layer-resolved board state to battlefield `game_object`s:
   `types` (current type line), `colors` (current, `["colorless"]` if none),
-  keyword fields (replaced in schema 10, below); `temp_power`/`temp_toughness` = summed P/T boosts with static id 0 --
-  a *heuristic* for "from resolved spells/abilities, usually until end of
-  turn" (exact durations are not read); and, on face-up objects only, choices
+  keyword fields (replaced in schema 10, below); `temp_power`/`temp_toughness`
+  (a heuristic, replaced by `affected_by` edges in schema 13); and, on face-up objects only, choices
   read from the public `CardView` (`chosen_colors`, `chosen_type`,
   `named_card` + `named_card_oracle_id`, `chosen_player` as a player ref,
   `chosen_number`) plus cast-time `x_paid` / `kicked`. Secret choices
@@ -206,15 +362,14 @@ AI-only runs keep `baseline`. Set the property explicitly to override.
   choice props on face-down/unnamed tokens.
 - Schema 9 token layout: a token's top level holds only `type`, `zone`,
   `edges` and the keys `src/magicnet/catalog/keys.json` classifies `identity`
-  or `ref` (`id`, `name`, `oracle_id`, `*_id`, `*_player`, `source`, `card`,
-  `target`/`target_<i>`, `actor`, `owner`, `named_card`, `attempt`, ...);
+  or `ref` (`id`, `name`, `oracle_id`, `source_oracle_id`, `handles`,
+  `source`, `named_card`, `chosen_player`, `attempt`, ...);
   every model input (number / flag / string / string_list) is under
   `components`, omitted when empty, e.g.
-  `{"type":"game_object","zone":"self_battlefield","id":"c37","name":"Soul-Scar Mage","oracle_id":"...","edges":[...],"components":{"power":6,"toughness":5,"base_power":1,"base_toughness":2,"tapped":true,"ctr_+1/+1":1,"gained":["Trample"],"temp_power":3}}`.
+  `{"type":"game_object","zone":"self_battlefield","id":"c37","name":"Soul-Scar Mage","oracle_id":"...","edges":[...],"components":{"power":6,"toughness":5,"base_power":1,"base_toughness":2,"tapped":true,"ctr_+1/+1":1,"gained":["Trample"]}}`.
   `Schema.isTopLevel` is the single rule (`tests/test_schema.py` checks it
   against keys.json); read components with `magicnet.dump.comp`. Flags are
-  written only when true, except an attacker's `blocked` and CardPhased's
-  `phased_out` (false = phased in). History `ability` text has Forge's
+  written only when true, except an attacker's `blocked`. History `ability` text has Forge's
   run-unstable `Name (id)` object ids removed. Action options and the record
   envelope are unchanged (flat).
 - Schema 10 abilities: printed abilities reach the model through `oracle_id`,

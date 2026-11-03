@@ -292,6 +292,27 @@ public final class RevealKnowledge {
         }
     }
 
+    private static int forgotByUnseenDeparture;
+
+    /**
+     * A card left a hand and {@code viewerId} could not tell which: it no
+     * longer knows whether the cards it knew there (all of them if the card
+     * went somewhere unseen, as with Brainstorm's put-back; only those of the
+     * same name if it was seen arriving face up) are still in that hand.
+     * Schemas 13-14; the tracking handles are lost by the same rule (GameHistory).
+     */
+    static synchronized void unseenDeparture(int viewerId, java.util.Collection<Integer> handIds) {
+        Map<Integer, Long> m = KNOWN.get(viewerId);
+        if (m == null) {
+            return;
+        }
+        for (Integer id : handIds) {
+            if (m.remove(id) != null) {
+                forgotByUnseenDeparture++;
+            }
+        }
+    }
+
     private static int learnedFromPublicMove;
     private static int learnedFromRevealThenMove;
 
@@ -368,6 +389,68 @@ public final class RevealKnowledge {
             }
             return false;
         });
+        if (from == ZoneType.Hand && e.from() != null && e.from().player() != null) {
+            int handOwner = e.from().player().getId();
+            ZoneType dest = e.to() == null ? null : e.to().zoneType();
+            for (Player p : players) {
+                if (p.getId() == handOwner) {
+                    continue;
+                }
+                // Seen arriving face up: only known cards of the same name could
+                // have been it (schema 14: the viewer cannot tell which copy).
+                String sameName = seesArrival(g, e, dest, p) ? e.card().getName() : null;
+                java.util.List<Integer> hand = new java.util.ArrayList<>();
+                for (Player o : players) {
+                    if (o.getId() == handOwner) {
+                        for (Card c : o.getCardsIn(ZoneType.Hand)) {
+                            if (sameName == null || sameName.equals(c.getName())) {
+                                hand.add(c.getId());
+                            }
+                        }
+                    }
+                }
+                unseenDeparture(p.getId(), hand);
+            }
+        }
+    }
+
+    /** Whether {@code viewer} sees, face up, the card arrive where it went. */
+    private static boolean seesArrival(Game g, GameEventCardChangeZone e, ZoneType dest, Player viewer) {
+        if (dest == null) {
+            return false;
+        }
+        if (dest == ZoneType.Hand && e.to().player() != null && e.to().player().getId() == viewer.getId()) {
+            return true;
+        }
+        if (!publicOrigin(dest, false, false)) {
+            return false;
+        }
+        try {
+            Card now = null;
+            if (dest == ZoneType.Stack) {
+                for (Card c : g.getStackZone().getCards()) {
+                    if (c.getId() == e.card().getId()) {
+                        now = c;
+                    }
+                }
+            } else if (e.to().player() != null) {
+                for (Player p : g.getPlayers()) {
+                    if (p.getId() == e.to().player().getId()) {
+                        for (Card c : p.getCardsIn(dest)) {
+                            if (c.getId() == e.card().getId()) {
+                                now = c;
+                            }
+                        }
+                    }
+                }
+            }
+            if (now == null) {
+                return false;
+            }
+            return !now.isFaceDown() || now.getView().mayPlayerLook(viewer.getView());
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     /** Clears all knowledge. Call between games. Diagnostics persist across games. */
@@ -384,6 +467,7 @@ public final class RevealKnowledge {
         System.out.printf("  of which public-origin move:    %d%n", learnedFromPublicMove);
         System.out.printf("  of which reveal-then-move:      %d%n", learnedFromRevealThenMove);
         System.out.printf("dropped on leaving hand:          %d%n", droppedByMove);
+        System.out.printf("dropped by unseen hand departure: %d%n", forgotByUnseenDeparture);
         System.out.printf("ignored (viewer owns card):       %d%n", ignoredOwn);
         System.out.printf("own-cards-only reveal callbacks:  %d%n", ownOnlyCallbacks);
         System.out.printf("suppressed (no Reveal$ wish):     %d%n", suppressed);

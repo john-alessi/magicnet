@@ -1,0 +1,40 @@
+schema: verb [modifiers] {pointers}
+implicit modifiers (present on every token): [turn, phase, positional encoding]
+
+move_zone [from, to] {*obj, cause}
+play_land [] {player, obj}
+trigger [] {ability, controller, source, targets?, cause}
+resolve [] {controller, source, spell_or_ability}
+declare_attacker [] {active player, attacker, target}
+declare_blockers [] {active player, *blockers, target}
+activate [costs] {ability, controller, source}
+special_action [costs] {controller, source} <-- not sure about this one
+cast [costs, modes] {controller, spell, *targets}
+life_change [before, after] {player, cause?}
+deal_damage [amount] {source, target}
+shuffle [] {player, cause}
+discard [] {card, player, cause?}
+draw [amount] {player, cause}
+add_mana [amount, color] {player} <-- considering dropping this one
+reveal [] {card, cause}
+create [] {token, controller, cause}
+copy_spell [modes] {spell, controller, *targets, cause}
+change_control {obj, old_controller, new_controller, cause}
+does_not_resolve [reason]{stack_object, cause?}
+mulligan {player}
+counters_change [type, before, after] {obj, cause}
+
+not yet categorized:
+- scry / surveil resolution
+
+notes:
+- the 'reason' pointer refers to spell/ability causing the event, or the event causing the trigger
+  (e.g. trigger [] 'etb: deal 1 to each opponent', self, 'impact tremors', cause='move_zone[...]{...}')
+- since abilities are already objects that go on the stack they can be stored in the void/phantom zone once they leave so they can still be pointed to
+- passing priority and turn/phase changes are implicit
+- multiple targets should be ordered set to handle cases where different targets are subject to different effects
+- blockers must be ordered
+
+open questions:
+- can simultaneously resolving events share a positional encoding?
+- do replacement effects need to be encoded or are they implicit? are they even logged?

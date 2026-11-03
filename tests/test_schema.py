@@ -84,15 +84,23 @@ def test_every_emitted_relation_is_in_the_vocabulary(bridge: dict) -> None:
     src = REPO / "forge-bridge" / "src"
     if not src.exists():
         pytest.skip("bridge sources not present")
+    # Schema 13: history roles are passed as the first argument of the Part
+    # helpers (cardPart/playerPart/... and ``new Part``), which become edges.
+    # Those helpers forward a ``role`` / ``slot`` variable; ``slot`` is always
+    # ``Schema.targetSlot(i)``. Any other non-constant first argument fails.
+    dynamic_ok = {"role", "slot", "targetSlot"}
     emitted = set()
     for path in src.rglob("*.java"):
         if path.name == "Schema.java":
             continue
-        for m in re.finditer(r"\.edge\(\s*(?:Schema\.)?([A-Za-z_\"]+)", path.read_text()):
-            token = m.group(1)
+        for m in re.finditer(r"(?:\.edge|Part)\(\s*([^,)]*)", path.read_text()):
+            arg = m.group(1).strip()
+            if not arg or arg.startswith("String ") or arg.startswith("Rec "):
+                continue  # a helper's declaration, not a call
+            token = re.match(r"(?:Schema\.)?([A-Za-z_\"][A-Za-z0-9_\"]*)", arg).group(1)
             if token.startswith('"'):
                 emitted.add(token.strip('"'))  # bare literal: bypasses Schema
-            else:
+            elif token not in dynamic_ok:
                 emitted.add(token)
     constants = {name for name in emitted if name.isupper()}
     literals = {name for name in emitted if not name.isupper()}
@@ -105,6 +113,21 @@ def test_every_emitted_relation_is_in_the_vocabulary(bridge: dict) -> None:
         f"emitters use Schema constants absent from relations(): "
         f"{sorted(constants - declared)}"
     )
+
+
+def test_categorical_vocabularies_match(bridge: dict) -> None:
+    """Schema 13: every closed vocabulary a categorical component indexes is
+    pinned in magicnet.schema and matches the bridge's export."""
+    assert set(bridge["vocabs"]) == set(schema.VOCABS)
+    for name, values in bridge["vocabs"].items():
+        assert list(schema.VOCABS[name]) == values, f"vocabulary {name} drifted"
+
+
+def test_categorical_keys_name_a_pinned_vocabulary() -> None:
+    registry = load_registry()
+    cats = {k: e.vocab for k, e in registry.keys.items() if e.value_kind == "categorical"}
+    assert {"verb", "phase", "from", "to", "move_kind", "reason", "cause_kind"} <= set(cats)
+    assert not {k: v for k, v in cats.items() if v not in schema.VOCABS}
 
 
 def test_schema_version_matches(bridge: dict) -> None:
@@ -205,36 +228,39 @@ def _run_java_check(tmp_path: Path, name: str, body: str) -> list[dict]:
 def test_attempt_events_are_tagged_and_closed(bridge: dict, tmp_path: Path) -> None:
     """History stays append-only; a consumer drops a rolled-back attempt's events
     by its tag, so events inside an attempt must carry it and events outside
-    must not."""
+    must not -- and they are emitted before the attempt_end that closes it."""
     tokens = _run_java_check(tmp_path, "AttemptTagCheck", """
 package magicnet.bridge;
 
-import forge.game.event.GameEventCardDestroyed;
+import forge.game.event.GameEventPlayerLivesChanged;
 
 public class AttemptTagCheck {
     public static void main(String[] args) {
-        GameHistory h = new GameHistory(null, null);
-        h.onEvent(new GameEventCardDestroyed());
+        HistoryHub hub = new HistoryHub(null);
+        GameHistory h = hub.viewer(null);
+        hub.onEvent(new GameEventPlayerLivesChanged((forge.game.player.PlayerView) null, 20, 19));
         GameHistory.Attempt a = GameHistory.beginAttempt(null);
         if (GameHistory.beginAttempt(null) != null) {
             throw new AssertionError("a nested cast must not open a second attempt");
         }
-        h.onEvent(new GameEventCardDestroyed());
-        h.appendAttemptEnd(a, "rolled_back");
+        hub.attemptBegun(a);
+        hub.onEvent(new GameEventPlayerLivesChanged((forge.game.player.PlayerView) null, 19, 18));
+        hub.attemptEnd(a, "rolled_back");
         GameHistory.closeAttempt(a);
-        h.onEvent(new GameEventCardDestroyed());
+        hub.onEvent(new GameEventPlayerLivesChanged((forge.game.player.PlayerView) null, 18, 17));
         for (StateExtractor.Tok t : h.tokens()) {
             System.out.println(t.toJson());
         }
     }
 }
 """)
-    assert [(comp(t, "event"), t.get("attempt"), comp(t, "outcome")) for t in tokens] == [
-        ("CardDestroyed", None, None),
-        ("CardDestroyed", 1, None),
-        ("AttemptEnd", 1, "rolled_back"),
-        ("CardDestroyed", None, None),
+    assert [(t["id"], comp(t, "verb"), t.get("attempt"), comp(t, "outcome")) for t in tokens] == [
+        ("e0", "life_change", None, None),
+        ("e1", "life_change", 1, None),
+        ("e2", "attempt_end", 1, "rolled_back"),
+        ("e3", "life_change", None, None),
     ]
+    assert all(comp(t, "cause_kind") in schema.CAUSE_KINDS for t in tokens)
 
 
 def test_reveal_knowledge_is_per_viewer_and_dies_with_the_hand_visit(
@@ -260,6 +286,12 @@ public class RevealKnowledgeCheck {
         out("own_card_known", RevealKnowledge.knows(0, 11, 5L));
         RevealKnowledge.forget(10);
         out("after_leaving_hand_knows", RevealKnowledge.knows(1, 10, 5L));
+        // schema 13: an unseen card left that hand (Brainstorm's put-back)
+        RevealKnowledge.learn(1, 0, 12, 5L);
+        RevealKnowledge.learn(0, 1, 13, 5L);
+        RevealKnowledge.unseenDeparture(1, java.util.List.of(12, 14));
+        out("after_unseen_departure_knows", RevealKnowledge.knows(1, 12, 5L));
+        out("other_viewer_unaffected", RevealKnowledge.knows(0, 13, 5L));
     }
 }
 """)
@@ -271,6 +303,8 @@ public class RevealKnowledgeCheck {
         "own_card_learned": False,
         "own_card_known": False,
         "after_leaving_hand_knows": False,
+        "after_unseen_departure_knows": False,
+        "other_viewer_unaffected": True,
     }
 
 

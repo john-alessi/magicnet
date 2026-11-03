@@ -63,8 +63,22 @@ public final class Serializer {
      * 12: a card the viewer may not see carries no {@code name} or
      * {@code oracle_id} (state tokens) and history roles keep only
      * {@code <role>_id}, instead of the literal "HIDDEN" / "&lt;hidden&gt;".
+     * 13: history redesign. One token per event with {@code verb} and
+     * modifiers as components, participants as role edges to per-viewer
+     * tracking handles ({@code h<N>}, assigned to state tokens through their
+     * {@code handles} list), events ({@code e<N>}, the history token's id) or
+     * players; {@code cause} edges and {@code cause_kind}; phantom and
+     * untracked tokens; unseen opponent hand cards are one count aggregate;
+     * {@code affected_by} edges replace {@code temp_power}/{@code temp_toughness};
+     * a missing phase is "NONE".
+     * 14: no re-linking of tracking handles. A handle whose object the viewer
+     * can no longer follow but whose identity it knew moves for good to an
+     * identity phantom ("a copy of X"; {@code ceased} absent), instead of the
+     * untracked token and back to a live token when a card of that name shows
+     * up again. Ability/mode text loses Forge's bracketed run context and
+     * player names.
      */
-    public static final int SCHEMA = 12;
+    public static final int SCHEMA = 14;
 
     /** A priority decision: which spell or ability to play. */
     public static final String KIND_ABILITY = "ability";
@@ -493,7 +507,7 @@ public final class Serializer {
 
     private static String phase(Game g) {
         try {
-            return g == null ? "?" : String.valueOf(g.getPhaseHandler().getPhase());
+            return g == null ? "?" : Schema.phaseName(g.getPhaseHandler().getPhase());
         } catch (RuntimeException e) {
             return "?";
         }

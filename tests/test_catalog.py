@@ -280,7 +280,7 @@ def test_key_lookup_respects_as_of_and_describes_unregistered_keys(env):
     sync_registry(service.store, embedder)
     sync_registry(service.store, embedder, life="my life total")
     embedder.embedded.clear()
-    keys = ["life", "ctr_poison", "id", "target_3", "ctr_zorbo", "mysteryThing_count"]
+    keys = ["life", "ctr_poison", "id", "announce_X", "ctr_zorbo", "mysteryThing_count"]
     _, old = asyncio.run(service.lookup_keys(keys, as_of=2))
     _, new = asyncio.run(service.lookup_keys(keys, as_of=3))
     old, new = {r["key"]: r for r in old}, {r["key"]: r for r in new}
@@ -289,13 +289,13 @@ def test_key_lookup_respects_as_of_and_describes_unregistered_keys(env):
     assert np.array_equal(old["ctr_poison"]["vector"], new["ctr_poison"]["vector"])
     assert new["id"]["value_kind"] == "identity" and new["id"]["vector"] is None
     got = {k: (r["registered"], r["source"], r["description"]) for k, r in new.items() if not r["registered"]}
-    assert got == {"target_3": (False, "pattern", "target 3 chosen for the spell"),
+    assert got == {"announce_X": (False, "pattern", "announced value of X"),
                    "ctr_zorbo": (False, "pattern", "zorbo counters"),
                    "mysteryThing_count": (False, "derived", "mystery thing count")}
-    assert sorted(embedder.embedded) == sorted(["target 3 chosen for the spell", "zorbo counters",
+    assert sorted(embedder.embedded) == sorted(["announced value of X", "zorbo counters",
                                                 "mystery thing count"])  # registered ones were cached
     assert {r["key"]: r["hits"] for r in service.store.unregistered_keys()} == {
-        "target_3": 2, "ctr_zorbo": 2, "mysteryThing_count": 2}
+        "announce_X": 2, "ctr_zorbo": 2, "mysteryThing_count": 2}
 
 
 class GatedEmbedder(FakeEmbedder):

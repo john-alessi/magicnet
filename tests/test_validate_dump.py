@@ -29,30 +29,42 @@ def _nest(flat: dict) -> dict:
 
 SELF = _nest({"type": "player", "id": "p0", "side": "self"})
 SIDEBOARD = _nest({"type": "library_card", "zone": "opp_sideboard", "count": 15})
+OPP_HAND = _nest({"type": "library_card", "zone": "opp_hand", "count": 3})
+UNTRACKED = {"type": "library_card", "zone": "opp_untracked"}
 
 
-def _hand_reveal(card_id: str, name: str, shown_to: str = "p0") -> dict:
-    # As EventTokenizer emits it: "revealed_from" is the revealed card's zone.
-    return _nest({"type": "history", "event": "Reveal", "card_id": card_id, "card": name,
-                  "revealed_from": "Hand", "owner": "p1", "shown_to": shown_to})
+class _H:
+    """Builds one viewer's schema-13 history: each event gets the next e<N> id."""
+
+    def __init__(self) -> None:
+        self.n = 0
+
+    def ev(self, verb: str, edges: dict | None = None, step: int = 0, **comps) -> dict:
+        tok = {"type": "history", "zone": "history", "id": f"e{self.n}",
+               "components": {"verb": verb, "turn": 1, "phase": "MAIN1", "step": step,
+                              "step_order": 0, "cause_kind": "unknown", **comps}}
+        self.n += 1
+        if edges:
+            tok["edges"] = [{"rel": r, "to": t} for r, ts in edges.items()
+                            for t in (ts if isinstance(ts, list) else [ts])]
+        return tok
+
+    def move(self, src: str, dst: str, obj: str | None = None, step: int = 0, **comps) -> dict:
+        return self.ev("move_zone", {"obj": obj} if obj else None, step=step,
+                       **{"from": src, "to": dst, "move_kind": "other", **comps})
+
+    def reveal(self, src: str, obj: str, shown_to: str = "p0", step: int = 0) -> dict:
+        return self.ev("reveal", {"obj": obj, "player": shown_to}, step=step, **{"from": src, "count": 1})
 
 
-def _move(card_id: str, src: str, dst: str, name: str | None = None, **extra) -> dict:
-    return _nest({"type": "history", "zone": "history", "event": "CardChangeZone",
-                  "card_id": card_id, "card": name, "from": src, "to": dst, **extra})
+def _with(tok: dict, *handles: str) -> dict:
+    return dict(tok, handles=list(handles))
 
 
-def _dig_reveal(card_id: str, name: str) -> dict:
-    tok = _hand_reveal(card_id, name)
-    return dict(tok, components=dict(tok["components"], revealed_from="Library"))
-
-
-RESOLVED = _nest({"type": "history", "zone": "history", "event": "SpellResolved"})
-
-
-def _known(card_id: str, name: str) -> dict:
-    return _nest({"type": "game_object", "zone": "opp_hand", "id": card_id, "name": name,
-                  "known_by_reveal": True})
+def _known(card_id: str, name: str, *handles: str) -> dict:
+    tok = _nest({"type": "game_object", "zone": "opp_hand", "id": card_id, "name": name,
+                 "known_by_reveal": True})
+    return _with(tok, *handles) if handles else tok
 
 
 def _write(path: Path, records: list[tuple[list[dict], list[dict]]]) -> Path:
@@ -75,9 +87,11 @@ def _leaks(tmp_path: Path, records) -> dict:
 
 
 def test_known_card_after_a_reveal_to_the_viewer_passes(tmp_path: Path) -> None:
+    h = _H()
     assert _leaks(tmp_path, [
-        ([_move("c5", "Library", "Hand"), _hand_reveal("c5", "Bolt")],
-         [SELF, _known("c5", "Bolt"), SIDEBOARD]),
+        ([h.ev("draw", {"player": "p1"}, **{"from": "opp_library", "to": "opp_hand"}),
+          h.reveal("opp_hand", "h0")],
+         [SELF, _known("c5", "Bolt", "h0"), SIDEBOARD]),
     ]) == {}
 
 
@@ -86,16 +100,21 @@ def test_known_card_without_a_reveal_is_a_leak(tmp_path: Path) -> None:
 
 
 def test_reveal_to_someone_else_does_not_license_the_name(tmp_path: Path) -> None:
-    assert _leaks(tmp_path, [([_hand_reveal("c5", "Bolt", shown_to="p2")],
-                              [SELF, _known("c5", "Bolt")])])
+    h = _H()
+    assert _leaks(tmp_path, [([h.reveal("opp_hand", "h0", shown_to="p2")],
+                              [SELF, _known("c5", "Bolt", "h0")])])
 
 
-def test_knowledge_does_not_survive_leaving_and_returning_to_hand(tmp_path: Path) -> None:
-    assert _leaks(tmp_path, [
-        ([_hand_reveal("c5", "Bolt")], [SELF, _known("c5", "Bolt")]),
-        ([_move("c5", "Hand", "Graveyard"), _move("c5", "Graveyard", "Hand")],
-         [SELF, _known("c5", "Bolt")]),
+def test_knowledge_does_not_survive_an_unidentified_return_to_hand(tmp_path: Path) -> None:
+    h = _H()
+    offenders = _leaks(tmp_path, [
+        ([h.reveal("opp_hand", "h0")], [SELF, _known("c5", "Bolt", "h0")]),
+        ([h.move("opp_hand", "opp_library", "h0"),
+          h.ev("draw", {"player": "p1"}, **{"from": "opp_library", "to": "opp_hand"})],
+         [SELF, _known("c5", "Bolt", "h0")]),
     ])
+    assert any(k.startswith("known_by_reveal without a recorded cause") for k in offenders)
+    assert "handle not widened: on a token in opp_hand" in offenders
 
 
 def test_sideboard_aggregate_cannot_claim_revealed(tmp_path: Path) -> None:
@@ -106,92 +125,186 @@ def test_sideboard_aggregate_cannot_claim_revealed(tmp_path: Path) -> None:
 def test_named_opponent_hand_card_or_aggregate_is_a_leak(tmp_path: Path) -> None:
     library = _nest({"type": "library_card", "zone": "opp_library", "count": 30})
     hidden = _bf("c5", None, zone="opp_hand")
-    assert _leaks(tmp_path, [([], [SELF, hidden, library, SIDEBOARD])]) == {}
+    assert _leaks(tmp_path, [([], [SELF, hidden, library, SIDEBOARD, OPP_HAND])]) == {}
     assert _leaks(tmp_path, [([], [SELF, dict(hidden, name="Bolt")])]) == {
         "unredacted name in opp_hand: Bolt": 1}
     assert _leaks(tmp_path, [([], [SELF, dict(library, name="Bolt")])]) == {
         "unredacted name in opp_library: Bolt": 1}
 
 
-def test_oracle_id_on_an_unnamed_card_or_role_is_a_leak(tmp_path: Path) -> None:
+def test_oracle_id_on_an_unnamed_card_or_any_identity_on_history_is_a_leak(tmp_path: Path) -> None:
     exiled = _bf("c5", None, zone="opp_exile", oracle_id="o-bolt")
-    move = _move("c6", "Library", "Hand", to_player="p1", card_oracle_id="o-bolt")
+    h = _H()
+    move = dict(h.move("opp_library", "opp_hand"), card_oracle_id="o-bolt")
     assert _leaks(tmp_path, [([move], [SELF, exiled])]) == {
         "oracle_id on hidden game_object in opp_exile": 1,
         "card_oracle_id on hidden history in history": 1,
+        "history token carries card_oracle_id": 1,
     }
 
 
 def test_public_move_into_hand_explains_the_card(tmp_path: Path) -> None:
+    h = _H()
     assert _leaks(tmp_path, [
-        ([_move("c5", "Battlefield", "Hand", "Bear", to_player="p1")],
-         [SELF, _known("c5", "Bear")]),
+        ([h.move("opp_battlefield", "opp_hand", "h0", move_kind="bounce")],
+         [SELF, _known("c5", "Bear", "h0")]),
     ]) == {}
 
 
 def test_public_move_knowledge_expires_when_the_card_leaves_hand(tmp_path: Path) -> None:
+    h = _H()
     assert _leaks(tmp_path, [
-        ([_move("c5", "Graveyard", "Hand", "Bear", to_player="p1")],
-         [SELF, _known("c5", "Bear")]),
-        ([_move("c5", "Hand", "Library", to_player="p1"),
-          _move("c5", "Library", "Hand", to_player="p1")],
-         [SELF, _known("c5", "Bear")]),
+        ([h.move("opp_graveyard", "opp_hand", "h0")], [SELF, _known("c5", "Bear", "h0")]),
+        ([h.move("opp_hand", "opp_library", "h0"), h.move("opp_library", "opp_hand", "h0")],
+         [SELF, _known("c5", "Bear", "h0")]),
     ])
 
 
-def test_named_move_from_a_hidden_origin_is_a_leak(tmp_path: Path) -> None:
+def test_move_from_a_hidden_origin_does_not_explain_the_card(tmp_path: Path) -> None:
+    h = _H()
     assert _leaks(tmp_path, [
-        ([_move("c5", "Library", "Hand", "Bear", to_player="p1")], [SELF]),
+        ([h.move("opp_library", "opp_hand", "h0")], [SELF, _known("c5", "Bear", "h0")]),
     ])
 
 
 def test_face_down_departure_is_not_public(tmp_path: Path) -> None:
+    h = _H()
     offenders = _leaks(tmp_path, [
-        ([_move("c5", "Exile", "Hand", "Bear", to_player="p1", face_down=True)],
-         [SELF, _known("c5", "Bear")]),
+        ([h.move("opp_exile", "opp_hand", "h0", face_down=True)], [SELF, _known("c5", "Bear", "h0")]),
     ])
-    assert any(k.startswith("face-down move named") for k in offenders)
     assert any(k.startswith("known_by_reveal without a recorded cause") for k in offenders)
 
 
 def test_face_down_departure_the_viewer_could_see_is_public(tmp_path: Path) -> None:
-    looked = _nest({"type": "game_object", "zone": "self_battlefield", "id": "c5",
-                    "name": "Bear", "face_down": True})
+    h = _H()
+    looked = _with(_nest({"type": "game_object", "zone": "self_battlefield", "id": "c5",
+                          "name": "Bear", "face_down": True}), "h0")
     assert _leaks(tmp_path, [
-        ([], [SELF, looked]),
-        ([_move("c5", "Battlefield", "Hand", "Bear", to_player="p1", face_down=True)],
-         [SELF, _known("c5", "Bear")]),
+        ([h.ev("create", {"obj": "h0"}, to="self_battlefield")], [SELF, looked]),
+        ([h.move("self_battlefield", "opp_hand", "h0", face_down=True)], [SELF, _known("c5", "Bear", "h0")]),
     ]) == {}
 
 
 def test_face_down_departure_redacted_in_the_last_state_is_a_leak(tmp_path: Path) -> None:
-    unseen = _nest({"type": "game_object", "zone": "opp_exile", "id": "c5"})
+    h = _H()
+    unseen = _with(_nest({"type": "game_object", "zone": "opp_exile", "id": "c5"}), "h0")
     assert _leaks(tmp_path, [
-        ([], [SELF, unseen]),
-        ([_move("c5", "Exile", "Hand", "Bear", to_player="p1", face_down=True)], [SELF]),
+        ([h.move("opp_hand", "opp_exile", "h0", face_down=True)], [SELF, unseen]),
+        ([h.move("opp_exile", "opp_hand", "h0", face_down=True)], [SELF, _known("c5", "Bear", "h0")]),
     ])
 
 
 def test_dig_reveal_then_move_to_hand_explains_the_card(tmp_path: Path) -> None:
+    h = _H()
     assert _leaks(tmp_path, [
-        ([_dig_reveal("c5", "Bolt"), _move("c5", "Library", "Hand", to_player="p1"), RESOLVED],
-         [SELF, _known("c5", "Bolt")]),
+        ([h.reveal("opp_library", "h0", step=5), h.move("opp_library", "opp_hand", "h0", step=5)],
+         [SELF, _known("c5", "Bolt", "h0")]),
     ]) == {}
 
 
 def test_dig_reveal_does_not_survive_the_effect(tmp_path: Path) -> None:
+    h = _H()
     assert _leaks(tmp_path, [
-        ([_dig_reveal("c5", "Bolt"), RESOLVED, _move("c5", "Library", "Hand", to_player="p1")],
-         [SELF, _known("c5", "Bolt")]),
+        ([h.reveal("opp_library", "h0", step=5), h.move("opp_library", "opp_hand", "h0", step=6)],
+         [SELF, _known("c5", "Bolt", "h0")]),
     ])
 
 
 def test_dig_reveal_only_covers_the_cards_next_move(tmp_path: Path) -> None:
+    h = _H()
     assert _leaks(tmp_path, [
-        ([_dig_reveal("c5", "Bolt"), _move("c5", "Library", "Library", to_player="p1"),
-          _move("c5", "Library", "Hand", to_player="p1")],
-         [SELF, _known("c5", "Bolt")]),
+        ([h.reveal("opp_library", "h0", step=5), h.move("opp_library", "opp_library", "h0", step=5),
+          h.move("opp_library", "opp_hand", "h0", step=5)],
+         [SELF, _known("c5", "Bolt", "h0")]),
     ])
+
+
+# ---- schema 13: tracking handles -------------------------------------------
+
+
+def test_resolve_edges_follows_handles_and_event_ids() -> None:
+    from magicnet.dump import resolve_edges, strip_ids
+    h = _H()
+    bounce = h.move("opp_battlefield", "opp_hand", "h0", move_kind="bounce")
+    trig = h.ev("trigger", {"cause": "e0", "source_is": "h1", "actor": "p1"})
+    opp = _nest({"type": "player", "id": "p1", "side": "opp"})
+    bear = _with(_bf("c9", "Prowler", zone="opp_battlefield"), "h1")
+    tokens = [bounce, trig, SELF, opp, _with(OPP_HAND, "h0"), bear]
+    assert resolve_edges(tokens)[:2] == [[("obj", 4)], [("cause", 0), ("source_is", 5), ("actor", 3)]]
+    assert all("handles" not in t and "id" not in t for t in strip_ids(tokens))
+
+
+
+def test_handle_on_an_individual_hidden_card_is_a_leak(tmp_path: Path) -> None:
+    h = _H()
+    bounce = h.move("opp_battlefield", "opp_hand", "h0", move_kind="bounce")
+    hidden = _with(_bf("c5", None, zone="opp_hand"), "h0")
+    assert _leaks(tmp_path, [([bounce], [SELF, hidden])]) == {
+        "handle on an individual hidden card in opp_hand": 1}
+    assert _leaks(tmp_path, [([bounce], [SELF, _with(OPP_HAND, "h0")])]) == {}
+
+
+def test_history_edges_target_only_handles_events_and_players(tmp_path: Path) -> None:
+    h = _H()
+    first = h.ev("draw", {"player": "p1"}, **{"from": "opp_library", "to": "opp_hand"})
+    trig = h.ev("trigger", {"cause": "c42"})
+    assert _leaks(tmp_path, [([first, trig], [SELF])]) == {
+        "history edge to a non-handle/event/player ref (cause)": 1}
+    ok = _H()
+    assert _leaks(tmp_path, [([ok.ev("draw", None, **{"from": "opp_library", "to": "opp_hand"}),
+                               ok.ev("trigger", {"cause": "e0"})], [SELF])]) == {}
+    late = _H()
+    assert _leaks(tmp_path, [([late.ev("trigger", {"cause": "e1"}), late.ev("draw")], [SELF])]) == {
+        "history edge to a later event": 1}
+
+
+def test_lost_track_must_be_widened_to_untracked(tmp_path: Path) -> None:
+    h = _H()
+    hist = [h.move("opp_battlefield", "opp_hand", "h0", move_kind="bounce"),
+            h.move("opp_hand", "opp_library", step=1)]  # Brainstorm puts back an unseen card
+    assert _leaks(tmp_path, [(hist, [SELF, _with(OPP_HAND, "h0")])]) == {
+        "handle not widened: on a token in opp_hand": 1}
+    assert _leaks(tmp_path, [(hist, [SELF, OPP_HAND, _with(UNTRACKED, "h0")])]) == {}
+    # Schema 14: a known identity goes to an identity phantom ("a copy of Bear").
+    copy = _with(_nest({"type": "game_object", "zone": "phantom", "name": "Bear", "side": "opp"}), "h0")
+    assert _leaks(tmp_path, [(hist, [SELF, OPP_HAND, copy])]) == {}
+
+
+def test_a_lost_handle_never_returns_from_a_phantom(tmp_path: Path) -> None:
+    h = _H()
+    hist = [h.move("opp_battlefield", "opp_hand", "h0", move_kind="bounce"),
+            h.move("opp_hand", "opp_library", step=1)]
+    copy = _with(_nest({"type": "game_object", "zone": "phantom", "name": "Bear", "side": "opp"}), "h0")
+    relinked = _with(_bf("c5", "Bear"), "h0")
+    later = [h.ev("cast", {"stack_object": "h1", "source_is": "h1"}, step=2)]
+    stack = _with({"type": "stack_item", "zone": "stack", "id": "s9"}, "h1")
+    assert _leaks(tmp_path, [(hist, [SELF, OPP_HAND, copy]), (later, [SELF, copy, stack])]) == {}
+    assert _leaks(tmp_path, [(hist, [SELF, OPP_HAND, copy]), ([], [SELF, relinked])]) == {
+        "handle returned from a phantom to a token in opp_battlefield": 1,
+        "handle not widened: on a token in opp_battlefield": 1}
+
+
+def test_every_referenced_handle_is_assigned_exactly_once(tmp_path: Path) -> None:
+    h = _H()
+    hist = [h.ev("create", {"obj": "h0"}, to="self_battlefield")]
+    bear = _bf("c1", "Bear", zone="self_battlefield")
+    assert _leaks(tmp_path, [(hist, [SELF, bear])]) == {"referenced handle assigned to 0 tokens": 1}
+    assert _leaks(tmp_path, [(hist, [SELF, _with(bear, "h0"), _with(OPP_HAND, "h0")])]) == {
+        "referenced handle assigned to 2 tokens": 1}
+    assert _leaks(tmp_path, [(hist, [SELF, _with(bear, "h0", "h7")])]) == {
+        "handle assigned but never referenced": 1}
+
+
+def test_phantom_never_names_an_object_last_seen_unnamed(tmp_path: Path) -> None:
+    h = _H()
+    morph = _with(_bf("c1", None, face_down=True), "h0")
+    phantom = _with(_nest({"type": "game_object", "zone": "phantom", "name": "Bear", "side": "opp"}), "h0")
+    hist1 = [h.ev("create", {"obj": "h0"}, to="opp_battlefield")]
+    hist2 = [h.move("opp_battlefield", "opp_graveyard", "h0")]
+    assert _leaks(tmp_path, [(hist1, [SELF, morph]), (hist2, [SELF, phantom])]) == {
+        "phantom names an object last seen unnamed": 1}
+    with_id = dict(phantom, id="c1")
+    assert "phantom carries an id" in _leaks(tmp_path, [(hist1 + hist2, [SELF, with_id])])
 
 
 def _bf(card_id: str, name: str | None, zone: str = "opp_battlefield", **extra) -> dict:
@@ -239,26 +352,38 @@ def test_chosen_player_must_be_a_player_token(tmp_path: Path) -> None:
 
 
 def test_layout_of_well_formed_tokens_passes() -> None:
+    h = _H()
     tokens = [SELF, _bf("c1", "Bear", tapped=True, power=2, base_power=2, gained=["Trample"],
                             lost=["{T}: Add {G}."], blocked=False),
-              _move("c5", "Battlefield", "Hand", "Bear", to_player="p1"),
-              _nest({"type": "history", "event": "SpellResolved", "source": "Bear",
-                     "ability": "Prowess (Whenever you cast a noncreature spell, ...)"})]
+              h.move("opp_battlefield", "opp_hand", "h0", move_kind="bounce"),
+              h.ev("trigger", {"source_is": "h0"},
+                   ability="Prowess (Whenever you cast a noncreature spell, ...)")]
     assert validate_dump.check_layout(tokens) == {}
 
 
 def test_layout_flags_misplaced_keys_false_flags_and_object_ids() -> None:
     misplaced = {"type": "game_object", "zone": "opp_battlefield", "tapped": True,
-                 "components": {"card_id": "c1"}}
+                 "components": {"handles": ["h1"]}}
     false_flag = _bf("c2", "Bear", tapped=False)
-    old_style = _nest({"type": "history", "event": "SpellResolved",
-                       "ability": "Soul-Scar Mage (124): Prowess [Card: Kumano Faces Kakkazan (94)]"})
+    old_style = _H().ev("trigger", ability="Soul-Scar Mage (124): Prowess [Card: Kumano Faces Kakkazan (94)]")
     assert validate_dump.check_layout([misplaced, false_flag, old_style, dict(SELF, components={})]) == {
         "component at top level: tapped": 1,
-        "top-level key in components: card_id": 1,
+        "top-level key in components: handles": 1,
         "false flag emitted: game_object.tapped": 1,
         "object id in string component: ability": 1,
+        "bracketed context in string component: ability": 1,
         "empty components": 1,
+    }
+
+
+def test_layout_flags_forge_run_context_in_strings() -> None:
+    old_style = _H().ev("trigger", ability="Whenever an opponent draws a card, they lose 2 life. "
+                                            "[Player: P1-[Test] History Midrange B]")
+    zone_ctx = _H().ev("trigger", ability="When this enters, you become the monarch. [Zone Changer: Palace Jailer]")
+    clean = _H().ev("trigger", ability="Whenever an opponent draws a card, they lose 2 life.")
+    assert validate_dump.check_layout([old_style, zone_ctx, clean]) == {
+        "player name in string component: ability": 1,
+        "bracketed context in string component: ability": 2,
     }
 
 

@@ -115,14 +115,11 @@ public class InstrumentedController extends GeneratedController {
     private static java.util.List<StateExtractor.Tok> history(Game game, forge.game.player.Player viewer) {
         synchronized (HISTORY_LOCK) {
             Integer key = viewer == null ? Integer.valueOf(-1) : Integer.valueOf(viewer.getId());
-            LibraryKnowledge.attach(game);
-            RevealKnowledge.attach(game);
-            GameHistory h = HISTORIES.get(key);
-            if (h == null) {
-                h = new GameHistory(game, viewer);
-                game.subscribeToEvents(h);
-                HISTORIES.put(key, h);
-            }
+            // Schema 13: one hub per game builds the events; each viewer's
+            // history redacts them. The hub attaches the knowledge stores first.
+            HistoryHub hub = HistoryHub.attach(game);
+            GameHistory h = hub.viewer(viewer);
+            HISTORIES.put(key, h);
             return h.tokens();
         }
     }
@@ -140,6 +137,16 @@ public class InstrumentedController extends GeneratedController {
 
     public InstrumentedController(Game game, Player p, forge.LobbyPlayer lp) {
         super(game, p, lp);
+        // Register this viewer's history before the game starts, so it sees the
+        // pregame events (opening hands, mulligans) too, not just everything
+        // after this player's first decision.
+        try {
+            if (game != null && p != null) {
+                history(game, p);
+            }
+        } catch (Throwable ignored) {
+            // instrumentation must never fail a game
+        }
     }
 
     /**
@@ -612,6 +619,7 @@ public class InstrumentedController extends GeneratedController {
                 StateStats.recordRedactions(redactions);
             }
             HISTORIES.clear();
+            HistoryHub.reset();
             GameHistory.resetAttempts();
             nextRevealGroup = 0;
             lastRevealKey = null;
@@ -781,7 +789,14 @@ public class InstrumentedController extends GeneratedController {
      */
     @Override
     public boolean playChosenSpellAbility(SpellAbility sa) {
+        HistoryHub hub = HistoryHub.of(getGame());
+        if (hub != null && sa != null && GameHistory.currentAttempt() == null) {
+            hub.sync();
+        }
         GameHistory.Attempt attempt = sa == null ? null : GameHistory.beginAttempt(sa);
+        if (hub != null && attempt != null) {
+            hub.attemptBegun(attempt);
+        }
         String outcome = "unknown";
         try {
             if (!"engine".equals(TARGET_MODE) || sa == null) {
@@ -830,10 +845,9 @@ public class InstrumentedController extends GeneratedController {
 
     private void finishAttempt(GameHistory.Attempt a, String outcome) {
         try {
-            synchronized (HISTORY_LOCK) {
-                for (GameHistory h : HISTORIES.values()) {
-                    h.appendAttemptEnd(a, outcome);
-                }
+            HistoryHub hub = HistoryHub.of(getGame());
+            if (hub != null) {
+                hub.attemptEnd(a, outcome);
             }
         } finally {
             GameHistory.closeAttempt(a);
@@ -1409,21 +1423,11 @@ public class InstrumentedController extends GeneratedController {
             group = ++nextRevealGroup;
             lastRevealKey = key.toString();
         }
-        // Every viewer's history records that the reveal happened; EventTokenizer
-        // names the cards only for the recipient (me) or where Forge already lets
-        // that viewer see them.
-        for (Player viewer : game.getPlayers()) {
-            history(game, viewer);
-            GameHistory h;
-            synchronized (HISTORY_LOCK) {
-                h = HISTORIES.get(viewer.getId());
-            }
-            if (h == null) {
-                continue;
-            }
-            for (forge.game.card.Card c : foreign) {
-                h.appendReveal(c, zone, owner != null ? owner : c.getOwner(), me, group, foreign.size());
-            }
+        // Every viewer's history records that the reveal happened; the cards
+        // are edges only for the recipient (me) or a viewer who can see them.
+        HistoryHub hub = HistoryHub.of(game);
+        if (hub != null) {
+            hub.reveal(foreign, zone, owner != null ? owner : foreign.get(0).getOwner(), me);
         }
         synchronized (HISTORY_LOCK) {
             lastRevealHistSize = HISTORIES.get(me.getId()).size();
@@ -2589,6 +2593,25 @@ public class InstrumentedController extends GeneratedController {
      */
     @Override
     public boolean playTrigger(forge.game.card.Card host, forge.game.trigger.WrappedAbility wa,
+            boolean isMandatory) {
+        // Static triggers bypass the stack, so no cast event announces them: the
+        // trigger event and the scope its consequences point at are opened here.
+        HistoryHub hub = HistoryHub.of(getGame());
+        if (hub != null && wa != null) {
+            hub.beginStaticTrigger(host, wa);
+        }
+        boolean used = false;
+        try {
+            used = playTriggerInner(host, wa, isMandatory);
+            return used;
+        } finally {
+            if (hub != null && wa != null) {
+                hub.endStaticTrigger(used);
+            }
+        }
+    }
+
+    private boolean playTriggerInner(forge.game.card.Card host, forge.game.trigger.WrappedAbility wa,
             boolean isMandatory) {
         census("playTrigger");
         if (!routeChoices() || wa == null) {

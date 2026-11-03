@@ -62,6 +62,18 @@ public final class Schema {
     /** No longer emitted in state (schema 3); kept for encoder-built candidate tokens. */
     public static final String ACTIONS = "actions";
     public static final String HISTORY = "history";
+    /**
+     * Schema 13. Last-known characteristics of objects that ceased to exist (a
+     * token that left the battlefield, a copy or an ability that left the
+     * stack), kept while a history edge still refers to them.
+     */
+    public static final String PHANTOM = "phantom";
+    /** Schema 13. Suffix of the per-side token holding handles whose object the viewer lost track of. */
+    public static final String UNTRACKED_SUFFIX = "_untracked";
+
+    public static String untracked(String side) {
+        return side + UNTRACKED_SUFFIX;
+    }
 
     /** The zone name for a player zone, viewer-relative. */
     public static String zoneName(String side, ZoneType z) {
@@ -93,6 +105,10 @@ public final class Schema {
         out.add(DELAYED);
         out.add(ACTIONS);
         out.add(HISTORY);
+        out.add(PHANTOM);
+        for (String side : SIDES) {
+            out.add(untracked(side));
+        }
         return out;
     }
 
@@ -132,6 +148,50 @@ public final class Schema {
      */
     public static final String AFFECTS = "affects";
 
+    // Schema 13: history participants are edges whose relation is the role.
+    // A history edge targets a per-viewer tracking handle (h<N>), an event
+    // (e<N>) or a player (p<N>), never a raw object id.
+    /** Player who took the action, or controls the ability. */
+    public static final String ACTOR = "actor";
+    /** Player affected (whose zone, who drew, whose life changed). */
+    public static final String PLAYER = "player";
+    /** Object moved or affected. */
+    public static final String OBJ = "obj";
+    // Reused for history roles, with identical semantics (schema 13):
+    //   SOURCE_IS   - source card of a spell, ability or damage
+    //   ATTACKS     - the attacking creature (declare_attacker, declare_blockers)
+    //   DEFENDER    - the player/planeswalker/battle it attacks
+    //   BLOCKS      - a blocking creature (declare_blockers)
+    //   ATTACHED_TO - the object/player an attach event attached obj to
+    // BLOCKED and UNBLOCKED are no longer emitted (kept so indices do not shift).
+    /** The spell or ability on the stack. */
+    public static final String STACK_OBJECT = "stack_object";
+    /** Ordered target slots; anything past the fourth goes to target_more. */
+    public static final String TARGET_0 = "target_0";
+    public static final String TARGET_1 = "target_1";
+    public static final String TARGET_2 = "target_2";
+    public static final String TARGET_3 = "target_3";
+    public static final String TARGET_MORE = "target_more";
+    public static final String NEW_CONTROLLER = "new_controller";
+    public static final String OLD_CONTROLLER = "old_controller";
+    /** Event(s) this event is a consequence of. Multi-valued. */
+    public static final String CAUSE = "cause";
+    /** Source of a replacement effect that modified this event (in addition to its cause). */
+    public static final String REPLACED_BY = "replaced_by";
+    /**
+     * State side: a board object -> whatever currently modifies it: the source
+     * token of an active static effect (the reverse of {@link #AFFECTS}), or the
+     * history resolve event whose continuous effect is still applied to it.
+     */
+    public static final String AFFECTED_BY = "affected_by";
+
+    private static final String[] TARGET_SLOTS = {TARGET_0, TARGET_1, TARGET_2, TARGET_3};
+
+    /** The relation for the i-th target (0-based) of a spell or ability. */
+    public static String targetSlot(int i) {
+        return i < TARGET_SLOTS.length ? TARGET_SLOTS[i] : TARGET_MORE;
+    }
+
     public static List<String> relations() {
         List<String> out = new ArrayList<>();
         out.add(SOURCE_IS);
@@ -149,7 +209,73 @@ public final class Schema {
         out.add(MERGED_UNDER);
         out.add(OWNER_IS);
         out.add(AFFECTS);
+        out.add(ACTOR);
+        out.add(PLAYER);
+        out.add(OBJ);
+        out.add(STACK_OBJECT);
+        out.add(TARGET_0);
+        out.add(TARGET_1);
+        out.add(TARGET_2);
+        out.add(TARGET_3);
+        out.add(TARGET_MORE);
+        out.add(NEW_CONTROLLER);
+        out.add(OLD_CONTROLLER);
+        out.add(CAUSE);
+        out.add(REPLACED_BY);
+        out.add(AFFECTED_BY);
         return out;
+    }
+
+    // ---- Schema 13 categorical vocabularies (keys.json `vocab`) ----------
+
+    /** {@code verb} of a history token (vocab {@code verb}). */
+    public static final List<String> HISTORY_VERBS = Collections.unmodifiableList(Arrays.asList(
+            "move_zone", "draw", "discard", "play_land", "cast", "activate", "special_action",
+            "trigger", "resolve", "does_not_resolve", "copy_spell", "declare_attacker",
+            "declare_blockers", "deal_damage", "life_change", "counters_change", "create",
+            "change_control", "reveal", "scry", "surveil", "shuffle", "mulligan",
+            "designation_change", "attach", "attempt_end"));
+
+    /** {@code move_kind} of a move_zone event (vocab {@code move_kind}). */
+    public static final List<String> MOVE_KINDS = Collections.unmodifiableList(Arrays.asList(
+            "put", "mill", "exile", "sacrifice", "destroy", "bounce", "search", "return", "other"));
+
+    /** {@code reason} of a does_not_resolve event (vocab {@code dnr_reason}). */
+    public static final List<String> DNR_REASONS = Collections.unmodifiableList(Arrays.asList(
+            "countered", "fizzled", "removed"));
+
+    /**
+     * {@code cause_kind} (vocab {@code cause_kind}), present on every history
+     * token: {@code pointer} when the event is a consequence of the events its
+     * {@code cause} edges point at, otherwise the rule category that produced it.
+     */
+    public static final List<String> CAUSE_KINDS = Collections.unmodifiableList(Arrays.asList(
+            "pointer", "turn_based", "state_based", "combat", "pregame", "player_action", "unknown"));
+
+    /** Value of {@code phase} when Forge has no current phase (before the first turn). */
+    public static final String NO_PHASE = "NONE";
+
+    /** {@code phase} (vocab {@code phase}): Forge PhaseType names, then {@link #NO_PHASE}. */
+    public static List<String> phases() {
+        // Read the enum constants by reflection without initializing PhaseType,
+        // whose static initializer needs Forge's localizer (absent in a bare JVM).
+        List<String> out = new ArrayList<>();
+        try {
+            Class<?> c = Class.forName("forge.game.phase.PhaseType", false, Schema.class.getClassLoader());
+            for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                if (f.isEnumConstant()) {
+                    out.add(f.getName());
+                }
+            }
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException(e);
+        }
+        out.add(NO_PHASE);
+        return out;
+    }
+
+    public static String phaseName(forge.game.phase.PhaseType p) {
+        return p == null ? NO_PHASE : p.name();
     }
 
     /** Token {@code type} values, which are a separate vocabulary from zones. */
@@ -185,22 +311,20 @@ public final class Schema {
     public static final Set<String> TOP_LEVEL_KEYS = Collections.unmodifiableSet(new LinkedHashSet<>(Arrays.asList(
             "type", "zone", "edges",
             // identity
-            "id", "name", "oracle_id", "attempt", "reveal", "i",
+            "id", "name", "oracle_id", "source_oracle_id", "named_card_oracle_id", "attempt", "i", "handles",
             // ref
-            "source", "card", "attachment", "target", "actor", "owner", "shown_to",
-            "named_card", "chosen_player")));
+            "source", "named_card", "chosen_player")));
 
     /**
-     * Suffix families: {@code <role>_id} / {@code <role>_oracle_id} /
-     * {@code target_<i>_id} / {@code card<i>_oracle_id} ... (identity) and
-     * {@code <role>_player} (ref).
+     * Suffix families. None since schema 13, which removed the history role
+     * families ({@code <role>_id}, {@code <role>_oracle_id},
+     * {@code <role>_player}, {@code target_<i>}, {@code card<i>}): history
+     * participants are edges.
      */
-    public static final List<String> TOP_LEVEL_SUFFIXES = Collections.unmodifiableList(Arrays.asList(
-            "_id", "_player"));
+    public static final List<String> TOP_LEVEL_SUFFIXES = Collections.unmodifiableList(new ArrayList<String>());
 
-    /** Whole-key regexes: {@code target_<i>} and {@code card<i>} (refs). */
-    public static final List<String> TOP_LEVEL_PATTERNS = Collections.unmodifiableList(Arrays.asList(
-            "target_\\d+", "card\\d+"));
+    /** Whole-key regexes. None since schema 13. */
+    public static final List<String> TOP_LEVEL_PATTERNS = Collections.unmodifiableList(new ArrayList<String>());
 
     private static final List<Pattern> TOP_LEVEL_REGEXES = compile(TOP_LEVEL_PATTERNS);
 
@@ -256,7 +380,20 @@ public final class Schema {
         appendAll(sb, tokenTypes());
         sb.append("],\"relations\":[");
         appendAll(sb, relations());
-        sb.append("],\"components\":\"").append(COMPONENTS);
+        sb.append("],\"vocabs\":{\"verb\":[");
+        appendAll(sb, HISTORY_VERBS);
+        sb.append("],\"move_kind\":[");
+        appendAll(sb, MOVE_KINDS);
+        sb.append("],\"dnr_reason\":[");
+        appendAll(sb, DNR_REASONS);
+        sb.append("],\"cause_kind\":[");
+        appendAll(sb, CAUSE_KINDS);
+        sb.append("],\"phase\":[");
+        appendAll(sb, phases());
+        sb.append("],\"zone\":[");
+        appendAll(sb, zoneNames());
+        sb.append("]}");
+        sb.append(",\"components\":\"").append(COMPONENTS);
         sb.append("\",\"top_level\":{\"keys\":[");
         appendAll(sb, new ArrayList<>(TOP_LEVEL_KEYS));
         sb.append("],\"suffixes\":[");

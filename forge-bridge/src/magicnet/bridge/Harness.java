@@ -160,7 +160,7 @@ public final class Harness {
         Serializer.close();
         DecisionLog.printPoolAudit();
         StateStats.print();
-        GameHistory.printCoverage();
+        HistoryHub.printCoverage();
         LibraryKnowledge.printCoverage();
         RevealKnowledge.printCoverage();
         OracleIds.printCoverage();
@@ -316,19 +316,16 @@ public final class Harness {
                 if (oppId == null) {
                     continue;
                 }
+                // Schema 13: history tokens carry no card identity at all --
+                // participants are edges to handles -- so any name or oracle id
+                // on a history line is a leak.
                 for (String ln : lines) {
-                    if (!ln.contains("\"event\":\"CardChangeZone\"")) {
-                        continue;
-                    }
-                    if (!"Hand".equals(field(ln, "to"))) {
-                        continue;
-                    }
-                    if (!oppId.equals(field(ln, "to_player"))) {
+                    if (!ln.contains("\"type\":\"history\"")) {
                         continue;
                     }
                     checked++;
-                    String name = field(ln, "card");
-                    if (name != null) {
+                    if (ln.contains("\"name\":") || ln.contains("oracle_id\":")
+                            || ln.matches(".*\"to\":\"c\\d+\".*")) {
                         leaks++;
                         if (firstLeak == null) {
                             firstLeak = f.getName() + ": " + ln;
@@ -340,14 +337,14 @@ public final class Harness {
             }
         }
         System.out.println("\n=== history redaction ===");
-        System.out.printf("opponent draws seen in dumped history: %d%n", checked);
+        System.out.printf("history tokens seen in dumped states:  %d%n", checked);
         System.out.printf("redactions applied across all games:   %d%n",
                 StateStats.totalRedactions());
         if (leaks > 0) {
-            System.out.printf("LEAK: %d opponent-hand cards named in history%n", leaks);
+            System.out.printf("LEAK: %d history tokens carry card identity%n", leaks);
             System.out.println("  first: " + firstLeak);
         } else if (checked > 0) {
-            System.out.println("ok: every opponent draw was redacted");
+            System.out.println("ok: no history token carries card identity");
         } else {
             System.out.println("inconclusive: no opponent draws in the dumped sample");
         }

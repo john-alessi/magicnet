@@ -12,7 +12,17 @@ Changing the order is a schema change and invalidates existing checkpoints.
 
 from __future__ import annotations
 
-SCHEMA = 12
+SCHEMA = 14
+
+# Schema 14: a lost handle never returns to a live token; with a known identity
+# it is assigned to an identity phantom (no ``ceased`` flag), and component text
+# carries no bracketed Forge run context or player names.
+
+# Schema 13: history redesign. One token per event: ``verb`` and its modifiers
+# are components; participants are edges whose relation is the role, pointing
+# at per-viewer tracking handles (``h<N>``, listed in the ``handles`` of the one
+# state token each is assigned to), events (``e<N>``, a history token's ``id``)
+# or players. See magicnet.dump and forge-bridge/README.md.
 
 # Schema 12: a card the viewer may not see has no ``name``/``oracle_id`` at all
 # (history roles keep only ``<role>_id``); absence means unknown. See
@@ -50,6 +60,14 @@ ZONES: tuple[str, ...] = (
     # tokens from Decision.actions and assigns them this zone and type.
     "actions",
     "history",
+    # Schema 13: last-known characteristics of objects that ceased to exist
+    # (tokens off the battlefield, copies and abilities off the stack), kept
+    # while a history edge refers to them.
+    "phantom",
+    # Schema 13: per-side holder of tracking handles whose object the viewer
+    # can no longer place in a single zone.
+    "self_untracked",
+    "opp_untracked",
 )
 
 TOKEN_TYPES: tuple[str, ...] = (
@@ -97,7 +115,84 @@ RELATIONS: tuple[str, ...] = (
     # object/player it applies to, carried on the source token. Both ends are
     # visible to the viewer; no self-loops. Appended last.
     "affects",
+    # Schema 13: history roles (edges from an event token). Reused with the
+    # same meaning: source_is (source card), attacks (attacker), defender,
+    # blocks (blocker), attached_to (attach host). blocked/unblocked are no
+    # longer emitted.
+    "actor",
+    "player",
+    "obj",
+    "stack_object",
+    "target_0",
+    "target_1",
+    "target_2",
+    "target_3",
+    "target_more",
+    "new_controller",
+    "old_controller",
+    "cause",
+    "replaced_by",
+    # State side: object -> static source (reverse of affects) or the history
+    # resolve event whose continuous effect still applies to it.
+    "affected_by",
 )
+
+# Schema 13: closed vocabularies of ``categorical`` component keys, by the
+# ``vocab`` name keys.json gives them. Order is load-bearing (embedding index).
+HISTORY_VERBS: tuple[str, ...] = (
+    "move_zone", "draw", "discard", "play_land", "cast", "activate", "special_action",
+    "trigger", "resolve", "does_not_resolve", "copy_spell", "declare_attacker",
+    "declare_blockers", "deal_damage", "life_change", "counters_change", "create",
+    "change_control", "reveal", "scry", "surveil", "shuffle", "mulligan",
+    "designation_change", "attach", "attempt_end",
+)
+MOVE_KINDS: tuple[str, ...] = (
+    "put", "mill", "exile", "sacrifice", "destroy", "bounce", "search", "return", "other",
+)
+DNR_REASONS: tuple[str, ...] = ("countered", "fizzled", "removed")
+# ``pointer``: the event is a consequence of the events its ``cause`` edges
+# point at. Otherwise the rule category that produced it. state_based events
+# may also carry a ``cause`` edge to the damage that made them lethal.
+CAUSE_KINDS: tuple[str, ...] = (
+    "pointer", "turn_based", "state_based", "combat", "pregame", "player_action", "unknown",
+)
+# Forge PhaseType names, then NONE (no current phase: before the first turn).
+PHASES: tuple[str, ...] = (
+    "UNTAP", "UPKEEP", "DRAW", "MAIN1", "COMBAT_BEGIN", "COMBAT_DECLARE_ATTACKERS",
+    "COMBAT_DECLARE_BLOCKERS", "COMBAT_FIRST_STRIKE_DAMAGE", "COMBAT_DAMAGE", "COMBAT_END",
+    "MAIN2", "END_OF_TURN", "CLEANUP", "NONE",
+)
+
+VOCABS: dict[str, tuple[str, ...]] = {
+    "zone": ZONES,
+    "verb": HISTORY_VERBS,
+    "move_kind": MOVE_KINDS,
+    "dnr_reason": DNR_REASONS,
+    "cause_kind": CAUSE_KINDS,
+    "phase": PHASES,
+}
+
+VOCAB_LOOKUP: dict[str, str] = {
+    "zone": "zone",
+    "to": "zone",
+    "from": "zone",
+    "verb": "verb",
+    "move_kind": "move_kind",
+    "dnr_reason": "dnr_reason",
+    "cause_kind": "cause_kind",
+    "phase": "phase",
+}
+
+
+def vocab_index(vocab: str, value: str) -> int:
+    """Index of a categorical value in its closed vocabulary; raises on unknown."""
+    try:
+        return VOCABS[vocab].index(value)
+    except (KeyError, ValueError):
+        raise KeyError(
+            f"unknown {vocab} value {value!r}; magicnet.schema predates the bridge. "
+            f"Re-run tests/test_schema.py to see the current vocabulary."
+        ) from None
 
 _ZONE_INDEX = {name: i for i, name in enumerate(ZONES)}
 _ZONE_INDEX[NO_ZONE] = len(ZONES)

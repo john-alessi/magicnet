@@ -30,8 +30,10 @@ EDGE_FIELDS = {"rel", "to"}
 # Files whose hand-written JSON is a token, an action option or a decision record.
 JSON_EMITTERS = {"Serializer.java", "StateExtractor.java"}
 
-# Tok.p(key, value) and Tok.flag(key, bool) (schema 9: flags only when true).
-_P_CALL = re.compile(r"\.(?:p|flag)\(\s*([^,]+?)\s*,")
+# Tok.p(key, value) and Tok.flag(key, bool) (schema 9: flags only when true), and
+# HistoryHub's record modifiers, r.mods.put(key, value) (schema 13), which
+# GameHistory copies onto the token.
+_P_CALL = re.compile(r"\.(?:p|flag|mods\.put)\(\s*([^,]+?)\s*,")
 _LITERAL = re.compile(r'^"([^"]*)"$')
 _JSON_FIELD = re.compile(r'\\"([A-Za-z_][A-Za-z0-9_]*)\\":')
 _ROLE_CALL = re.compile(r"\b(card|player|entity|zone)\(\s*(?:t|ev\(\"[^\"]*\"\))\s*,\s*([^,]+?)\s*,")
@@ -96,20 +98,18 @@ def test_every_dynamic_key_expression_has_a_pattern(registry, scan) -> None:
     )
 
 
-def test_event_roles_and_their_derived_keys_are_registered(registry, scan) -> None:
-    by_helper = scan["roles_by_helper"]
-    assert by_helper.get("card"), "role scan found no card() calls"
-    need = set(scan["role"])
-    for role in by_helper.get("card", set()) | by_helper.get("entity", set()):
-        need |= {f"{role}_id", f"{role}_oracle_id"}
-    for role in by_helper.get("zone", set()):
-        need.add(f"{role}_player")
-    assert not sorted(need - set(registry.keys)), sorted(need - set(registry.keys))
+def test_history_has_no_role_named_keys(registry, scan) -> None:
+    """Schema 13: history participants are edges, so no key is computed from a
+    role name any more -- the old card()/player()/zone() role helpers are gone
+    and their key families are no longer registered."""
+    assert not scan["roles_by_helper"], scan["roles_by_helper"]
+    for gone in ("card_id", "target_0", "actor", "from_player", "event"):
+        assert gone not in registry.keys, gone
+    assert registry.resolve("target_7_id")[0] == "derived"
 
 
 def test_dynamic_families_resolve_to_patterns(registry) -> None:
-    for key, pattern, kind in [("target_2", "target_{i}", "ref"), ("target_2_oracle_id", "target_{i}_oracle_id", "identity"),
-                               ("card1_id", "card{i}_id", "identity"), ("announce_Multikicker", "announce_{what}", "number"),
+    for key, pattern, kind in [("announce_Multikicker", "announce_{what}", "number"),
                                ("ctr_brand_new", "ctr_{name}", "number")]:
         source, entry = registry.resolve(key)
         assert (source, entry.pattern, entry.value_kind) == ("pattern", pattern, kind), key

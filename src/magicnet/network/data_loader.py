@@ -1,8 +1,7 @@
 import torch
 from .constants import *
-from ..schema import ZONES
 
-def load_data(
+def load_game(
     state: list[dict],
     history: list[dict],
     catalog: any,
@@ -10,7 +9,9 @@ def load_data(
 ) -> dict[str, torch.Tensor]:
     # each game object component should become a [key, value, kind, idx]
     # vector (where idx corresponds to the parent object index)
-    components = []
+    object_components = []
+    event_components = []
+    edges = []
     card_names = set(
         [
             c['name']
@@ -21,8 +22,11 @@ def load_data(
     card_metadata = catalog.lookup(card_names)
 
     for i,gobj in enumerate(state):
+        if 'edges' in gobj:
+            for e in gobj['edges']:
+                edges += [(RELATIONS.index(e['rel']), i+len(history), indexof(e['to'], history, state))]
         if 'zone' in gobj:
-            components += [('zone', gobj['zone'], 'zone', i)]
+            object_components += [('zone', gobj['zone'], 'categorical', i)]
         if 'components' in gobj:
             for k,v in gobj['components'].items():
                 if k == 'colors':
@@ -30,57 +34,99 @@ def load_data(
                         int(c in v)
                         for c in COLOR_WHEEL
                     ]
-                    components += [(k, onehot, 'color', i)]
+                    object_components += [(k, onehot, 'color', i)]
                 elif isinstance(v, bool) and v is True:
-                    components += [(k, None, 'flag', i)]
+                    object_components += [(k, None, 'flag', i)]
                 elif isinstance(v, (int,float)):
-                    components += [(k, v, 'scalar', i)]
+                    object_components += [(k, v, 'scalar', i)]
                 elif isinstance(v, list):
                     for f in v:
-                        components += [(k, f, 'vector', i)]
+                        object_components += [(k, f, 'vector', i)]
                 else:
-                    components += [(k, v, 'vector', i)]
+                    object_components += [(k, v, 'vector', i)]
     
-    keys = set(k for k,_,_,_ in components)
+    for i,event in enumerate(history):
+        if 'edges' in event:
+            for e in event['edges']:
+                edges += [(RELATIONS.index(e['rel']), i, indexof(e['to'], history, state))]
+        if 'components' in event:
+            for k,v in event['components'].items():
+                if k in VOCAB_LOOKUP.keys():
+                    event_components += [(k, v, 'categorical', i)]
+                elif isinstance(v, bool) and v is True:
+                    event_components += [(k, None, 'flag', i)]
+                elif isinstance(v, (int,float)):
+                    event_components += [(k, v, 'scalar', i)]
+                elif isinstance(v, list):
+                    for f in v:
+                        event_components += [(k, f, 'vector', i)]
+                else:
+                    event_components += [(k, v, 'vector', i)]
+    
+    keys = set(k for k,_,_,_ in object_components + event_components)
     key_embeddings = dict(zip(keys, catalog.key_vectors(keys)))
 
-    vectors = [v for (_,v,kd,_) in components if kd == 'vector']
+    vectors = [v for (_,v,kd,_) in object_components + event_components if kd == 'vector']
     vector_embeddings = dict(zip(vectors, catalog.embed_strings(vectors)))
 
-    packed_scalars = torch.tensor([
+    return {
+        'state': pack_components(object_components, key_embeddings, vector_embeddings, len(state)),
+        'history': pack_components(event_components, key_embeddings, vector_embeddings, len(history)),
+        'edges': torch.tensor(edges, dtype=torch.int32),
+        'unknown_cards': torch.tensor(
+            [i for i,c in enumerate(state) if 'name' not in c and 'zone' in c],
+            dtype=torch.int32,
+        ),
+    }
+
+def indexof(id: str, history, state):
+    indices = [
+        i for i,v in enumerate(history + state)
+        if ('id' in v and v['id'] == id) or ('handles' in v and id in v['handles'])
+    ]
+    if len(indices) == 0:
+        print(f'could not find object with id {id}')
+    elif len(indices) == 1:
+        return indices[0]
+    else:
+        raise Exception(f'Multiple tokens parsed with id {id}({len(indices)})')
+
+def pack_components(components: list, key_embeddings: dict, vector_embeddings: dict, num_tokens: int):
+    scalars = torch.tensor([
         list(key_embeddings[k]) + [v, i]
         for (k,v,kd,i) in components
         if kd == 'scalar'
     ])
 
-    packed_vectors = torch.tensor([
+    vectors = torch.tensor([
         list(key_embeddings[k]) + list(vector_embeddings[v]) + [i]
         for (k,v,kd,i) in components
         if kd == 'vector'
     ])
 
-    packed_flags = torch.tensor([
+    flags = torch.tensor([
         list(key_embeddings[k]) + [i]
         for (k,_,kd,i) in components
         if kd == 'flag' 
     ])
 
-    packed_colors = torch.tensor([
+    colors = torch.tensor([
         list(key_embeddings[k]) + v + [i]
         for (k,v,kd,i) in components
         if kd == 'color' 
     ])
 
-    packed_categoricals = torch.tensor([
-        list(key_embeddings[k]) + [CATEGORICALS[k].index(v), list(CATEGORICALS).index(k), i]
+    categoricals = torch.tensor([
+        list(key_embeddings[k]) + [VOCABS[VOCAB_LOOKUP[k]].index(v), list(VOCABS).index(VOCAB_LOOKUP[k]), i]
         for (k,v,kd,i) in components
-        if kd in CATEGORICALS.keys()
+        if kd == 'categorical'
     ])
 
     return {
-        'scalars': packed_scalars,
-        'vectors': packed_vectors,
-        'colors': packed_colors,
-        'flags': packed_flags,
-        'categoricals': packed_categoricals,
+        'scalars': scalars,
+        'vectors': vectors,
+        'colors': colors,
+        'flags': flags,
+        'categoricals': categoricals,
+        'num_tokens': num_tokens,
     }

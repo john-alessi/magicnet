@@ -48,6 +48,37 @@ public final class StateStats {
     private StateStats() {
     }
 
+    /** Creatures with a non-static P/T boost, and how many of those got an affected_by -> resolve edge. */
+    private static final long[] EFFECT_EDGES = new long[4];
+
+    /**
+     * Schema 13 evidence for replacing temp_power/temp_toughness: every creature
+     * whose P/T boost table has a static-id-0 entry (the old heuristic's input)
+     * should carry an affected_by edge to a resolve event.
+     */
+    static synchronized void recordEffectEdges(forge.game.card.Card c, boolean hasEdge) {
+        boolean boosted = false;
+        try {
+            for (com.google.common.collect.Table.Cell<Long, Long, ?> cell : c.getPTBoostTable().cellSet()) {
+                if (cell.getColumnKey() != null && cell.getColumnKey() == 0L) {
+                    boosted = true;
+                }
+            }
+        } catch (Throwable ignored) {
+            // not a creature
+        }
+        if (boosted) {
+            EFFECT_EDGES[0]++;
+            if (hasEdge) {
+                EFFECT_EDGES[1]++;
+            }
+        }
+        if (hasEdge) {
+            EFFECT_EDGES[2]++;
+        }
+        EFFECT_EDGES[3]++;
+    }
+
     public static void recordUncompressedLibrary(int n) {
         UNCOMPRESSED_LIB.add(n);
     }
@@ -238,6 +269,12 @@ public final class StateStats {
     }
 
     public static void print() {
+        synchronized (StateStats.class) {
+            System.out.printf("%n=== affected_by -> resolve (schema 13) ===%n"
+                    + "battlefield objects checked: %d, with a resolve edge: %d%n"
+                    + "with a static-id-0 P/T boost: %d, of which with a resolve edge: %d%n",
+                    EFFECT_EDGES[3], EFFECT_EDGES[2], EFFECT_EDGES[0], EFFECT_EDGES[1]);
+        }
         if (TOTALS.isEmpty()) {
             System.out.println("\n=== token stats: no states recorded "
                     + "(enable with -Dmagicnet.tokens=1) ===");

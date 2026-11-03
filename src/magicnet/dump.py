@@ -38,9 +38,32 @@ Hidden cards have no name (schema 12)
 A card the viewer may not see carries no ``name`` and no ``oracle_id``: per
 the rules an unseen or face-down card has no name, and an absent key means
 unknown. That holds for state tokens (redacted hand/sideboard cards, face-down
-opponent permanents, the ``count`` aggregates of an opponent's unseen library
-and sideboard) and for history roles, which then keep only ``<role>_id``. Test
-with :func:`is_hidden`, never by comparing names.
+opponent permanents, the ``count`` aggregates of an opponent's unseen hand
+(schema 13), library and sideboard). Test with :func:`is_hidden`, never by
+comparing names.
+
+History events and tracking handles (schema 13)
+-----------------------------------------------
+Each history token is one event: ``verb`` (``move_zone``, ``draw``, ``cast``,
+``trigger``, ``resolve`` ...) and its modifiers are components, plus ``turn``,
+``phase``, ``step``/``step_order`` and ``cause_kind`` on every one. Its
+participants are ``edges`` whose relation is the role (``actor``, ``obj``,
+``stack_object``, ``source_is``, ``target_<i>``, ``cause`` ...), pointing at:
+
+* ``e<N>``  -- another history event (a history token's top-level ``id``);
+* ``p<N>``  -- a player token;
+* ``h<N>``  -- a per-viewer *tracking handle*. History is append-only, but a
+  handle follows its object across zone changes: every state lists each handle
+  referenced so far in the top-level ``handles`` of exactly one token -- the
+  object's own token, the aggregate of the hidden zone it is known to be in, the
+  ``phantom`` token once it ceased to exist (``ceased: true``), a ``phantom``
+  of its identity once the viewer lost track of a card whose identity it knew
+  (schema 14: "a copy of X"; never re-linked to a card seen later), or the
+  owner's ``*_untracked`` token if it never knew the identity. Phantoms exist
+  only while some edge refers to them.
+
+A participant the viewer cannot identify has no edge at all. History tokens
+carry no card name or id.
 
 Ids are join keys, not features
 -------------------------------
@@ -63,7 +86,7 @@ from magicnet.schema import COMPONENTS
 
 # Bumped by the Java side on any change that alters the meaning of an existing
 # field. Refuse unknown schemas rather than silently misreading them.
-SUPPORTED_SCHEMA = 12
+SUPPORTED_SCHEMA = 14
 
 # ``api`` of the explicit "pass priority" option. Present (always last) only on
 # decisions where passing is legal; there is no sentinel value for passing.
@@ -71,10 +94,9 @@ PASS_API = "Pass"
 
 # Properties that must never reach the model.
 #
-# ``id`` is the explicit join key, but it is not the only one: history tokens
-# carry ``card_id``/``source_id``/``target``, and those are raw object ids too.
-# They are stripped by *value* rather than by key, because the set of keys that
-# happen to hold a card reference is not fixed and a new one would otherwise
+# ``id`` is the explicit join key and ``handles`` (schema 13) lists the tracking
+# handles a token stands for. Raw card references are additionally stripped by
+# *value* rather than by key, because a new key holding one would otherwise
 # leak silently.
 #
 # Card ids are doubly disqualified: they correlate with library order (so they
@@ -84,7 +106,7 @@ PASS_API = "Pass"
 # Player ids (``p0``/``p1``) are deliberately kept. There are only two, they are
 # stable, and ``from_player``/``to_player``/``actor`` are meaningless without
 # them.
-_LEAK_PROPS = frozenset({"id"})
+_LEAK_PROPS = frozenset({"id", "handles"})
 
 # A card reference as emitted by StateExtractor's namespaced ids: "c" + digits.
 _CARD_REF = re.compile(r"^c\d+$")
@@ -99,18 +121,15 @@ CARD_TOKEN_TYPES = frozenset({"game_object", "library_card"})
 
 
 def is_hidden(tok: dict, role: str | None = None) -> bool:
-    """Whether *tok* (or, for a history token, its card *role* such as
-    ``"card"``/``"source"``/``"target_0"``) is a card the viewer cannot see.
+    """Whether *tok* is a card the viewer cannot see: a card-type state token
+    without ``name`` (schema 12).
 
-    Hidden means unnamed (schema 12): a card-type state token without ``name``,
-    or a history role without its name (``<role>_id`` may still be present). A
-    role the token does not have at all is trivially unnamed, so this is also
-    the "nothing about this card is revealed" test for leak checks.
+    With *role* (e.g. ``"source"`` for a stack item's ``source`` /
+    ``source_oracle_id``), whether that named reference is absent. History
+    tokens carry no names at all since schema 13.
     """
     if role is None:
         return tok.get("type") in CARD_TOKEN_TYPES and "name" not in tok
-    # A role key the registry classifies as a component (CardAttachment's
-    # "to") holds the name under ``components``.
     return role not in tok and role not in tok.get(COMPONENTS, {})
 
 
@@ -287,6 +306,9 @@ def resolve_edges(tokens: list[dict]) -> list[list[tuple[str, int]]]:
         tok_id = tok.get("id")
         if tok_id is not None:
             index_of[str(tok_id)] = i
+        # Schema 13: a tracking handle resolves to the one token it is assigned to.
+        for handle in tok.get("handles", ()):
+            index_of[handle] = i
 
     out: list[list[tuple[str, int]]] = []
     for tok in tokens:
@@ -306,11 +328,9 @@ def strip_ids(tokens: list[dict]) -> list[dict]:
     id strings; the resolved index form returned by :func:`resolve_edges` is
     what downstream code should use.
 
-    Card references are dropped wherever they appear, not just under ``id``.
-    This currently costs information: a history event's link to the board object
-    it refers to survives only as a card *name*. The proper fix is Java-side --
-    history tokens should emit card references as ``edges`` so they resolve to
-    stable token indices instead of raw ids.
+    Card references are dropped wherever they appear, not just under ``id``;
+    ``handles`` (schema 13) go too. History events reach board objects through
+    their edges, which :func:`resolve_edges` has already turned into indices.
     """
     cleaned = []
     for tok in tokens:

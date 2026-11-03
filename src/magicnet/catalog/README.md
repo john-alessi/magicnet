@@ -99,29 +99,38 @@ embedded through `/strings/embed` and share the same cache.
 
 - `number`, `flag`, `string`, `string_list`
 - `ref`: points at another object or player and should become an edge
-- `identity`: a join key or token identity (`id`, `name`, `oracle_id`, `*_id`,
-  `*_oracle_id`, `type`, `zone`, `edges`, ...). These are not components and get no vector.
+- `identity`: a join key or token identity (`id`, `name`, `oracle_id`,
+  `source_oracle_id`, `handles`, `attempt`, `type`, `edges`, ...). These are not components and get no vector.
+- `categorical` (schema 13): a value from a closed vocabulary named by the key's
+  `vocab` (`zone`, `verb`, `move_kind`, `dnr_reason`, `cause_kind`,
+  `phase`), pinned in `magicnet.schema.VOCABS` and checked against the bridge
+  by `tests/test_schema.py`.
 
 **Token layout (schema 9).** `value_kind` also decides where a key sits in an
 emitted token: `identity` and `ref` keys at the top level, everything else under
 the token's `components` object (omitted when empty; flags only when true).
 `magicnet.bridge.Schema.isTopLevel` implements the split and
 `tests/test_schema.py` checks it agrees with this registry in both directions.
-Since schema 12 a card the viewer cannot see has no `name`/`oracle_id` (a
-history role keeps only `<role>_id`): absence means unknown, so no placeholder
-name is ever embedded (`magicnet.dump.is_hidden`).
+Since schema 12 a card the viewer cannot see has no `name`/`oracle_id`:
+absence means unknown, so no placeholder name is ever embedded
+(`magicnet.dump.is_hidden`). Since schema 13 history tokens carry no refs at
+all: their participants are edges (relations in `magicnet.schema.RELATIONS`),
+and their modifiers are ordinary components (`verb`, `step`, `cause_kind`,
+`from`/`to`, `before`/`after`, `mana_spent_W` ...).
 
-`patterns` describe dynamic families (`ctr_{name}`, `announce_{what}`,
-`target_{i}`, `card{i}`, `{role}_id`, `{role}_oracle_id`, `{role}_player`).
+`patterns` describe dynamic families (`ctr_{name}`, `announce_{what}`; the
+history role families `target_{i}`, `card{i}`, `{role}_id`, ... were removed in
+schema 13).
 Each has a description template and the Java expressions that produce it.
 The first matching pattern wins, and `{i}` matches digits.
 `counter_keys.json` is generated from Forge's `CounterType.getValues()` by
 `scripts/gen_counter_keys.py` (use `--check` to detect a stale file). It is
 expanded through `ctr_{name}` into one concrete key per counter type.
 `record_fields` lists the decision-record envelope, which is not made of token keys.
-`tests/test_keys.py` scans the bridge sources for `.p("key", ...)` calls, the
-JSON fields in Serializer/StateExtractor, computed keys, and EventTokenizer role
-arguments. It fails when any of them is unregistered.
+`tests/test_keys.py` scans the bridge sources for `.p("key", ...)` calls,
+HistoryHub's `r.mods.put("key", ...)` modifiers, the JSON fields in
+Serializer/StateExtractor and computed keys. It fails when any of them is
+unregistered.
 
 **Versioning.** `keys-sync` diffs the registry against the stored rows. If anything
 changed, it creates a new catalog version and copies the latest version's dump
@@ -136,7 +145,7 @@ table. Their texts are stored in `strings`.
 **Unknown keys.** `/keys/embed` resolves a key in this order:
 
 1. A registered key (`registered: true`, `source: "registry"`).
-2. A matching pattern, using the rendered template (`target_3` → "target 3 chosen for the spell", `ctr_oil` → "oil counters").
+2. A matching pattern, using the rendered template (`announce_X` → "announced value of X", `ctr_oil` → "oil counters").
 3. A description derived from the name (`snake_case` → "snake case", `value_kind: "unknown"`).
 
 Cases 2 and 3 come back with `registered: false`. They are logged once per

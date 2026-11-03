@@ -40,7 +40,7 @@ from typing import Protocol
 
 from magicnet.dump import Decision, HistoryReassembler, SUPPORTED_SCHEMA, SchemaError
 from magicnet.network.magicnet import MagicNet
-from magicnet.network.data_loader import load_data
+from magicnet.network.data_loader import load_game
 
 class Policy(Protocol):
     """Chooses an action given a decision request.
@@ -86,7 +86,7 @@ class LearnedPolicy:
             if c['type'] in ['game_object'] and c['name'] != 'HIDDEN'
         ]
         card_metadata = self.catalog.lookup(card_names)
-        game = load_data(decision.state, decision.history, self.catalog)
+        game = load_game(decision.state, decision.history, self.catalog)
         #x = self.model(decision.history, decision.state, card_metadata)
         self.decisions += 1
         selected_action = self._rng.randrange(len(decision.actions))

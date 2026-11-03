@@ -92,6 +92,8 @@ public final class StateExtractor {
         final String zone;
         final Map<String, Object> props = new LinkedHashMap<>();
         final List<String[]> edges = new ArrayList<>(2);
+        /** Stack items only: id of the spell's card, for handle assignment. Not serialized. */
+        int spellCard = -1;
 
         Tok(String type, String zone) {
             this.type = type;
@@ -269,18 +271,28 @@ public final class StateExtractor {
         // time, because endTempShowCards fires before the cards have moved.
         LibraryKnowledge.resolvePending();
 
+        // Bring the history up to date (a resolution with no event yet, held
+        // back moves) before it is copied in. Schema 13.
+        HistoryHub hub = HistoryHub.of(game);
+        GameHistory gh = null;
+        if (hub != null) {
+            hub.sync();
+            gh = hub.viewer(viewer);
+        }
+
         List<Tok> out = new ArrayList<>(128);
 
         // 1. History. Unbounded by construction; measuring it is the point.
         if (history != null) {
             out.addAll(history);
         }
+        final int stateFrom = out.size();
 
         // 2. Global state.
         try {
             out.add(new Tok("global", null)
                     .p("turn", game.getPhaseHandler().getTurn())
-                    .p("phase", String.valueOf(game.getPhaseHandler().getPhase()))
+                    .p("phase", Schema.phaseName(game.getPhaseHandler().getPhase()))
                     .flag("active_is_viewer", game.getPhaseHandler().getPlayerTurn() == viewer)
                     .p("stack_size", game.getStack().size()));
         } catch (Throwable ignored) {
@@ -330,6 +342,14 @@ public final class StateExtractor {
         // 8. Continuous-effect edges, once every visible token exists.
         emitAffects(out, game);
 
+        // 9. Schema 13: affected_by edges to the resolve events whose continuous
+        //    effects still apply, then every tracking handle the history refers
+        //    to is assigned to one token (adding phantom / untracked tokens).
+        if (gh != null) {
+            emitEffectEvents(out, game, gh, hub);
+            gh.decorate(out, stateFrom);
+        }
+
         // Legal actions are deliberately not tokens here: they live only in the
         // record's `actions` array (Serializer), the single copy the policy
         // indexes into. The encoder builds candidate tokens from it.
@@ -352,6 +372,7 @@ public final class StateExtractor {
             }
 
             int hiddenSideboard = 0;
+            int hiddenHand = 0;
             for (Card c : cards) {
                 boolean visible = self;
                 boolean knownByReveal = false;
@@ -368,6 +389,12 @@ public final class StateExtractor {
                     // this, and it is checked against the live card here.
                     knownByReveal = RevealKnowledge.knows(viewer, c);
                     visible = knownByReveal;
+                    if (!visible) {
+                        // Schema 13: unseen opponent hand cards are one count
+                        // aggregate (below), like the hidden library/sideboard.
+                        hiddenHand++;
+                        continue;
+                    }
                 }
                 Tok t = cardToken(c, zoneName, visible, z);
                 if (knownByReveal) {
@@ -385,6 +412,15 @@ public final class StateExtractor {
                 if (z == ZoneType.Battlefield) {
                     emitMergeComponents(out, c, side);
                 }
+            }
+            if (hiddenHand > 0) {
+                // Schema 13. Individual nameless hand tokens carried nothing but
+                // an id, and that id is exactly what must not be exposed: a
+                // tracking handle assigned to one would say WHICH unseen card a
+                // history event refers to. A handle the viewer can only place
+                // "somewhere in the opponent's hand" is assigned here.
+                out.add(new Tok("library_card", zoneName)
+                        .p("count", hiddenHand));
             }
             if (hiddenSideboard > 0) {
                 // Hidden opponent sideboard cards collapse to one count, exactly
@@ -626,7 +662,6 @@ public final class StateExtractor {
                     t.edge(Schema.OWNER_IS, playerRef(owner.getId()));
                 }
                 addCharacteristics(t, c);
-                addTempPT(t, c);
                 if (!c.isFaceDown()) {
                     addChoices(t, c);
                 }
@@ -674,40 +709,6 @@ public final class StateExtractor {
             }
             if (!d.lost.isEmpty()) {
                 t.p("lost", d.lost);
-            }
-        } catch (Throwable ignored) {
-            // skip
-        }
-    }
-
-    /**
-     * {@code temp_power}/{@code temp_toughness}: the summed P/T boosts whose
-     * static-ability id is 0. HEURISTIC: Forge files boosts from statics (lords,
-     * anthems, equipment) under the static's id and boosts applied by resolving
-     * spells/abilities (Giant Growth) under 0 -- which in practice are "until
-     * end of turn". Exact durations are not read (only reachable by reflection
-     * into end-of-turn command lists). Already included in power/toughness;
-     * omitted when zero.
-     */
-    private static void addTempPT(Tok t, Card c) {
-        try {
-            if (c.getType() == null || !c.getType().isCreature()) {
-                return;
-            }
-            int p = 0;
-            int q = 0;
-            for (com.google.common.collect.Table.Cell<Long, Long, org.apache.commons.lang3.tuple.Pair<Integer, Integer>> cell
-                    : c.getPTBoostTable().cellSet()) {
-                if (cell.getColumnKey() != null && cell.getColumnKey() == 0L && cell.getValue() != null) {
-                    p += cell.getValue().getLeft() == null ? 0 : cell.getValue().getLeft();
-                    q += cell.getValue().getRight() == null ? 0 : cell.getValue().getRight();
-                }
-            }
-            if (p != 0) {
-                t.p("temp_power", p);
-            }
-            if (q != 0) {
-                t.p("temp_toughness", q);
             }
         } catch (Throwable ignored) {
             // skip
@@ -793,6 +794,41 @@ public final class StateExtractor {
     }
 
     /**
+     * {@code affected_by} edges (schema 13) from a battlefield object to the
+     * history {@code resolve} (or static trigger) events whose continuous effects
+     * still apply to it: Giant Growth's +3/+3 points at Giant Growth's resolution
+     * until the effect ends. Replaces the {@code temp_power}/{@code temp_toughness}
+     * heuristic. See {@link GameHistory#effectEvents}.
+     */
+    private static void emitEffectEvents(List<Tok> out, Game game, GameHistory gh, HistoryHub hub) {
+        try {
+            Map<String, Tok> byId = new java.util.HashMap<>();
+            for (Tok t : out) {
+                Object id = t.props.get("id");
+                if (id != null && "game_object".equals(t.type) && t.zone != null
+                        && t.zone.endsWith("_battlefield")) {
+                    byId.put(String.valueOf(id), t);
+                }
+            }
+            for (Player p : game.getPlayers()) {
+                for (Card c : p.getCardsIn(ZoneType.Battlefield)) {
+                    Tok t = byId.get(cardRef(c.getId()));
+                    if (t == null || t.props.get("name") == null) {
+                        continue;
+                    }
+                    List<String> evs = gh.effectEvents(c, hub);
+                    for (String e : evs) {
+                        t.edge(Schema.AFFECTED_BY, e);
+                    }
+                    StateStats.recordEffectEdges(c, !evs.isEmpty());
+                }
+            }
+        } catch (Throwable ignored) {
+            // skip
+        }
+    }
+
+    /**
      * {@code affects} edges (schema 7): from the source of each active
      * continuous static effect to every object/player it currently applies to.
      *
@@ -863,6 +899,9 @@ public final class StateExtractor {
                 Tok src = visible.get(e.getKey());
                 for (String ref : e.getValue()) {
                     src.edge(Schema.AFFECTS, ref);
+                    // Schema 13: the same fact from the affected side, so a
+                    // query on the object attends to what modifies it.
+                    visible.get(ref).edge(Schema.AFFECTED_BY, e.getKey());
                 }
             }
         } catch (Throwable ignored) {
@@ -902,6 +941,9 @@ public final class StateExtractor {
                         .flag("is_trigger", si.isTrigger());
                 try {
                     Card src = si.getSourceCard();
+                    if (src != null && si.isSpell()) {
+                        t.spellCard = src.getId();
+                    }
                     if (src != null) {
                         t.p("source", src.getName());
                         t.p("source_oracle_id", OracleIds.of(src));
