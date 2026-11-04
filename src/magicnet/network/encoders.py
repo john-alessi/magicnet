@@ -133,9 +133,9 @@ class PooledAttention(torch.nn.Module):
         n_objects, L, _ = padded.shape
         k = self.k(padded).view(n_objects, L, self.n_heads, self.dh)
         v = self.v(padded).view(n_objects, L, self.n_heads, self.dv)
-        attn_scores = torch.einsum('hd,nlhd->nhl', self.q_cls, k) / self.dh**-0.5
+        attn_scores = torch.einsum('hd,nlhd->nhl', self.q_cls, k) * self.dh**-0.5
         attn_scores = attn_scores.masked_fill(~mask[:, None, :], float('-inf'))
-        attn_weights = torch.softmax(attn_scores, dim=1).nan_to_num(0.0)
+        attn_weights = torch.softmax(attn_scores, dim=-1).nan_to_num(0.0)
         game_objects = torch.einsum('nhl,nlhd->nhd', attn_weights, v).reshape(n_objects, self.out_dim)
         return self.out(game_objects)
 
