@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -1244,6 +1244,7 @@ dependencies = [
     { name = "torch" },
     { name = "tqdm" },
     { name = "uvicorn" },
+    { name = "zuko" },
 ]
 
 [package.dev-dependencies]
@@ -1271,6 +1272,7 @@ requires-dist = [
     { name = "torch", specifier = ">=2.14.1" },
     { name = "tqdm", specifier = ">=4.70.1" },
     { name = "uvicorn", specifier = ">=0.54.0" },
+    { name = "zuko", specifier = ">=1.6.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -2902,4 +2904,17 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/bf/60/bc7a980fc78837d6ef8f5940cca4cadc433364503a4c4d42e2a7a0de3231/widgetsnbextension-4.0.16.tar.gz", hash = "sha256:adeea0ae78f0856ee4945f413299801b82a0a01416303301f39a704282a37b73", size = 1111094, upload-time = "2026-08-18T08:52:55.859Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/34/95/40e17e20046b7bc820d29d09ae84ec157ec8dd6e6f6cd722626292c31b2e/widgetsnbextension-4.0.16-py3-none-any.whl", hash = "sha256:a31a8774885b96fe825462f5d6496166f0c7cae111195b6465c801d230eb5a4e", size = 2225148, upload-time = "2026-08-18T08:52:53.736Z" },
+]
+
+[[package]]
+name = "zuko"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8c/41/ddbe72cb64996d7826ba427c675252be0c38fbd9fbf8920d0fcdaf5d8e38/zuko-1.6.0.tar.gz", hash = "sha256:edc516e51bbbf9d64e7663b617cf9293c6e1e6bbfcb39559bc383383e6663b04", size = 45245, upload-time = "2026-03-10T08:38:19.646Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/10/ff159867f522cd98e039e748c5e9777446e8b797a79be691c6b730676094/zuko-1.6.0-py3-none-any.whl", hash = "sha256:5c073b613a84a7cd65470ddb94855169020ac49432f73b85f25207e377248a4a", size = 48033, upload-time = "2026-03-10T08:38:21.039Z" },
 ]

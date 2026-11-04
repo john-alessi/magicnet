@@ -12,7 +12,12 @@ Changing the order is a schema change and invalidates existing checkpoints.
 
 from __future__ import annotations
 
-SCHEMA = 14
+SCHEMA = 15
+
+# Schema 15: hidden-region count aggregates (opponent hand, library remainder,
+# sideboard) carry a top-level ``id`` ``r:<zone>`` -- a join key to the record's
+# training-only ``hidden_truth`` label, stripped like every id -- so an ``id`` on
+# a card-type token no longer implies one physical card. See magicnet.dump.
 
 # Schema 14: a lost handle never returns to a live token; with a known identity
 # it is assigned to an identity phantom (no ``ceased`` flag), and component text

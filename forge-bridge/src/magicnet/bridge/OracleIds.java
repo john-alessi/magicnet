@@ -86,6 +86,33 @@ public final class OracleIds {
     }
 
     /** Oracle id for an event's card view, from the name the viewer sees. */
+    /**
+     * {@code {name, oracle_id}} of a card's real identity, for training-only
+     * hidden-information labels: a face-down card's original face, not the
+     * nameless face-down state. A pure lookup -- unlike {@link #of(Card)} it
+     * does not touch the coverage counters, so turning labels on leaves the
+     * printed statistics unchanged. {@code oracle_id} is null if unresolved.
+     */
+    public static String[] truthOf(Card c) {
+        String name = null;
+        String id = null;
+        try {
+            name = c.isFaceDown()
+                    ? c.getState(forge.card.CardStateName.Original).getName()
+                    : c.getName();
+            CardRules rules = c.getRules();
+            if (rules != null && namesCard(name, rules)) {
+                id = BY_NAME.get(rules.getName());
+            }
+            if (id == null && name != null) {
+                id = BY_NAME.get(name);
+            }
+        } catch (Throwable ignored) {
+            // reported by the caller as a missing oracle id
+        }
+        return new String[] { name, id };
+    }
+
     public static String of(CardView c) {
         if (c == null || c.isToken() || c.isImmutable() || c.isEmblem()) {
             return null;

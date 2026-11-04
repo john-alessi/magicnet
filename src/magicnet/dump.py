@@ -65,6 +65,25 @@ participants are ``edges`` whose relation is the role (``actor``, ``obj``,
 A participant the viewer cannot identify has no edge at all. History tokens
 carry no card name or id.
 
+Hidden regions and training-only labels (schema 15)
+---------------------------------------------------
+A *hidden region* is a state token standing for cards the viewer cannot see:
+the ``count`` aggregate of the opponent's unseen hand, library remainder or
+sideboard (top-level ``id`` ``r:<zone>``, e.g. ``r:opp_hand``), or a face-down
+object the viewer cannot see (its card id). See :func:`is_region`.
+
+A dump written with ``-Dmagicnet.labels=true`` carries a record-level
+``hidden_truth`` (:attr:`Decision.hidden_truth`): one label per region token in
+``state``, keyed by the token's id::
+
+    {"region": "r:opp_hand", "total": 3,
+     "cards": [{"oracle_id": "...", "name": "Lightning Strike", "count": 2}, ...]}
+
+``total`` equals the region token's ``count`` (1 for a face-down object). It is a
+belief-model TARGET and must never reach the model as input: it is a sibling of
+``state``, not inside any token, it is never sent to a live agent, and
+:meth:`HistoryReassembler.absorb` rejects a live request carrying it.
+
 Ids are join keys, not features
 -------------------------------
 Token ``id`` properties exist only to resolve ``edges`` to token indices. They
@@ -86,7 +105,7 @@ from magicnet.schema import COMPONENTS
 
 # Bumped by the Java side on any change that alters the meaning of an existing
 # field. Refuse unknown schemas rather than silently misreading them.
-SUPPORTED_SCHEMA = 14
+SUPPORTED_SCHEMA = 15
 
 # ``api`` of the explicit "pass priority" option. Present (always last) only on
 # decisions where passing is legal; there is no sentinel value for passing.
@@ -107,6 +126,15 @@ PASS_API = "Pass"
 # stable, and ``from_player``/``to_player``/``actor`` are meaningless without
 # them.
 _LEAK_PROPS = frozenset({"id", "handles"})
+
+# Record field of the training-only hidden-information labels (schema 15).
+HIDDEN_TRUTH = "hidden_truth"
+
+# ``where`` the live agent passes to HistoryReassembler.absorb.
+LIVE_REQUEST = "live request"
+
+# Id prefix of a hidden-region aggregate token (schema 15): "r:" + zone.
+REGION_PREFIX = "r:"
 
 # A card reference as emitted by StateExtractor's namespaced ids: "c" + digits.
 _CARD_REF = re.compile(r"^c\d+$")
@@ -131,6 +159,17 @@ def is_hidden(tok: dict, role: str | None = None) -> bool:
     if role is None:
         return tok.get("type") in CARD_TOKEN_TYPES and "name" not in tok
     return role not in tok and role not in tok.get(COMPONENTS, {})
+
+
+def is_region(tok: dict) -> bool:
+    """Whether *tok* is a hidden region (schema 15): a count aggregate with an
+    ``r:<zone>`` id, or an individual card-type state token with an id but no
+    name (a face-down object the viewer cannot see). ``*_untracked`` and
+    phantom tokens carry no id and are not regions."""
+    tok_id = tok.get("id")
+    if not isinstance(tok_id, str) or tok.get("type") not in CARD_TOKEN_TYPES:
+        return False
+    return tok_id.startswith(REGION_PREFIX) or (_is_card_ref(tok_id) and is_hidden(tok))
 
 
 def comp(tok: dict, key: str, default=None):
@@ -173,6 +212,10 @@ class Decision:
     chosen: int
     # How the chosen action was resolved: identity, signature, absent or pass.
     chosen_match: str
+    # Schema 15, training-only: the true cards of each hidden-region state token
+    # ({"region", "cards", "total"} per region), or None when the dump was
+    # written without -Dmagicnet.labels=true. A target, never a model input.
+    hidden_truth: list[dict] | None = None
 
     @property
     def tokens(self) -> list[dict]:
@@ -226,8 +269,13 @@ class HistoryReassembler:
                 reassembler left off, which means records were lost, duplicated
                 or reordered. This is checked rather than tolerated because
                 every later context for that viewer would otherwise be silently
-                wrong, and a model would train on it without complaint.
+                wrong, and a model would train on it without complaint. Also
+                if a live request (``where == LIVE_REQUEST``, as the agent
+                passes) carries ``hidden_truth``: training labels reaching a
+                policy would let it play with the opponent's hand face up.
         """
+        if where == LIVE_REQUEST and HIDDEN_TRUTH in rec:
+            raise SchemaError(f"{where}: carries training-only {HIDDEN_TRUTH!r}; refusing to act on it")
         key = (rec["game"], rec["viewer"])
         running = self._histories[key]
 
@@ -259,6 +307,7 @@ class HistoryReassembler:
             # from a recorded pass, so it is marked explicitly as pending.
             chosen=rec.get("chosen", -1),
             chosen_match=rec.get("chosen_match", "pending"),
+            hidden_truth=rec.get(HIDDEN_TRUTH),
         )
 
 

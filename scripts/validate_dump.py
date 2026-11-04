@@ -36,6 +36,14 @@ Runs the checks that have to pass before a dump is trustworthy:
    entries are host-independent rules text (no ``(id)``, ``CARDNAME``, player
    name or the host's own name).
 5. **Label usability** -- the chosen action resolves to a pool index.
+6. **Hidden-truth labels** (schema 15, ``-Dmagicnet.labels=true``) -- every
+   hidden-region state token (``magicnet.dump.is_region``) has exactly one
+   label whose ``total`` equals its ``count`` (1 for a face-down object) and
+   the sum of its card counts; labels reference only region tokens of that
+   record; every labelled card has an ``oracle_id``; no label (or label-shaped
+   object) appears inside the observation (``hist_new``/``state``/``actions``);
+   a dump is labelled on every record or none; and a live request (no outcome
+   yet, ``chosen_match`` "pending") never carries labels.
 
 Usage:
     uv run scripts/validate_dump.py --dump /tmp/dump.jsonl
@@ -52,8 +60,8 @@ from collections import Counter
 from pathlib import Path
 
 from magicnet.dump import (
-    SchemaError, comp, flatten, is_hidden, load, resolve_edges, strip_ids, strip_option_ids,
-    summarise,
+    HIDDEN_TRUTH, REGION_PREFIX, SchemaError, comp, flatten, is_hidden, is_region, load,
+    resolve_edges, strip_ids, strip_option_ids, summarise,
 )
 from magicnet.catalog.keys import load_registry
 from magicnet.schema import COMPONENTS
@@ -122,6 +130,15 @@ _REF = re.compile(r"^[hep]\d+$")
 
 # State zones whose tokens tell us whether the viewer could see a card there.
 _PUBLIC_STATE_ZONES = PUBLIC_ZONES
+
+
+def _object_id(tok: dict) -> str | None:
+    """The id of a token standing for one object: not a hidden-region
+    aggregate's ``r:<zone>`` join key (schema 15)."""
+    tok_id = tok.get("id")
+    if isinstance(tok_id, str) and tok_id.startswith(REGION_PREFIX):
+        return None
+    return tok_id
 
 
 def _edges(tok: dict, rel: str | None = None) -> list[str]:
@@ -283,8 +300,8 @@ class _Replay:
                     self.problems[f"handle not widened: on a token in {zone}"] += 1
             if not handles:
                 continue
-            if tok.get("type") in ("game_object", "library_card") and "id" in tok and is_hidden(tok) \
-                    and zone in HIDDEN_ZONES:
+            if tok.get("type") in ("game_object", "library_card") and _object_id(tok) is not None \
+                    and is_hidden(tok) and zone in HIDDEN_ZONES:
                 self.problems[f"handle on an individual hidden card in {zone}"] += len(handles)
             if zone == "opp_hand" and not is_hidden(tok) and comp(tok, "known_by_reveal") is not True:
                 self.problems["handle on a named opp_hand card not known_by_reveal"] += 1
@@ -293,7 +310,7 @@ class _Replay:
                     self.problems["phantom carries an id"] += 1
                 if not is_hidden(tok) and any(self.named.get(h) is False for h in handles):
                     self.problems["phantom names an object last seen unnamed"] += 1
-            if "id" in tok and zone not in ("phantom",) and not zone.endswith("_untracked"):
+            if _object_id(tok) is not None and zone not in ("phantom",) and not zone.endswith("_untracked"):
                 for h in handles:
                     self.cid[h] = tok["id"]
                     self.named[h] = not is_hidden(tok)
@@ -534,6 +551,92 @@ def check_leaks(path: Path, limit: int) -> tuple[int, Counter]:
     return leaks, offenders
 
 
+# Keys of a hidden_truth label; an object carrying "region" and "cards" inside
+# the observation is a label that leaked into the model input.
+_LABEL_SHAPE = frozenset({"region", "cards"})
+
+
+def _label_in(obj, path: str = "") -> str | None:
+    """Where a label (the hidden_truth key or a label-shaped dict) sits inside
+    *obj*, or None."""
+    if isinstance(obj, dict):
+        if HIDDEN_TRUTH in obj:
+            return f"{path}.{HIDDEN_TRUTH}"
+        if _LABEL_SHAPE <= obj.keys():
+            return path or "."
+        for k, v in obj.items():
+            hit = _label_in(v, f"{path}.{k}")
+            if hit:
+                return hit
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            hit = _label_in(v, f"{path}[{i}]")
+            if hit:
+                return hit
+    return None
+
+
+def check_labels(path: Path, limit: int) -> tuple[Counter, int]:
+    """Check 6: hidden-truth labels against the region tokens of each record.
+
+    Works on raw records (not :func:`load`) so that a label smuggled into the
+    observation is seen exactly where it was written. Returns (problems,
+    labelled record count).
+    """
+    problems: Counter = Counter()
+    labelled = unlabelled = 0
+    with path.open() as fh:
+        for n, line in enumerate(fh):
+            if limit and n >= limit:
+                break
+            if not line.strip():
+                continue
+            rec = json.loads(line)
+            for part in ("hist_new", "state", "actions"):
+                where = _label_in(rec.get(part), part)
+                if where:
+                    problems[f"label inside the observation at {where.split('[')[0]}"] += 1
+            truth = rec.get(HIDDEN_TRUTH)
+            if truth is None:
+                unlabelled += 1
+                continue
+            labelled += 1
+            if rec.get("chosen_match", "pending") == "pending":
+                problems["live request (no outcome) carries hidden_truth"] += 1
+            regions = {}
+            for tok in rec["state"]:
+                if is_region(tok):
+                    if tok["id"] in regions:
+                        problems["two region tokens share an id"] += 1
+                    regions[tok["id"]] = tok
+                    if tok["id"].startswith(REGION_PREFIX) and not is_hidden(tok):
+                        problems["named region aggregate"] += 1
+            seen = set()
+            for lab in truth:
+                rid = lab.get("region")
+                if rid in seen:
+                    problems["two labels for one region"] += 1
+                seen.add(rid)
+                tok = regions.get(rid)
+                if tok is None:
+                    problems["label for a region token absent from the record"] += 1
+                    continue
+                want = comp(tok, "count", 1)
+                cards = lab.get("cards", [])
+                if lab.get("total") != want:
+                    problems[f"label total != region count ({tok.get('zone')})"] += 1
+                if sum(c.get("count", 0) for c in cards) != lab.get("total"):
+                    problems["label card counts do not sum to total"] += 1
+                for c in cards:
+                    if not c.get("oracle_id"):
+                        problems[f"labelled card without oracle_id: {c.get('name')}"] += 1
+            for rid in regions.keys() - seen:
+                problems[f"region without a label ({regions[rid].get('zone')})"] += 1
+    if labelled and unlabelled:
+        problems[f"{unlabelled} records without {HIDDEN_TRUTH} in a labelled dump"] += 1
+    return problems, labelled
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dump", required=True, type=Path)
@@ -566,6 +669,8 @@ def main() -> int:
     layout, ids_in_names = check_layout_dump(args.dump, args.limit)
     print(f"ids in names/refs  {ids_in_names} (informational)")
     option_ids = check_option_ids(islice(load(args.dump), args.limit or None))
+    label_problems, labelled = check_labels(args.dump, args.limit)
+    print(f"hidden_truth       {labelled} labelled records")
 
     failures = []
     if option_ids:
@@ -578,13 +683,16 @@ def main() -> int:
         failures.append(f"{leaks} leaked fields: {dict(offenders)}")
     if layout:
         failures.append(f"{sum(layout.values())} layout problems: {dict(layout)}")
+    if label_problems:
+        failures.append(f"{sum(label_problems.values())} hidden_truth problems: {dict(label_problems)}")
 
     if failures:
         for f in failures:
             print(f"FAIL {f}", file=sys.stderr)
         return 1
 
-    print("\nOK schema, history reconstruction, leak boundary, token layout, option ids, label usability")
+    print("\nOK schema, history reconstruction, leak boundary, token layout, option ids, label usability"
+          + (", hidden_truth" if labelled else ""))
     return 0
 
 

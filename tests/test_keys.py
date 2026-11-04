@@ -80,7 +80,7 @@ def scan():
 def test_every_literal_key_is_registered(registry, scan) -> None:
     emitted = scan["literal"] | scan["json"]
     assert emitted, "scan found no keys; the regex no longer matches the bridge"
-    known = set(registry.keys) | set(registry.record_fields) | EDGE_FIELDS
+    known = set(registry.keys) | set(registry.record_fields) | set(registry.label_fields) | EDGE_FIELDS
     missing = sorted(emitted - known)
     assert not missing, (
         f"the bridge emits keys missing from src/magicnet/catalog/keys.json: {missing}. "

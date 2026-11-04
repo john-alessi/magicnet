@@ -42,6 +42,18 @@ import forge.game.spellability.SpellAbility;
  * id before tensorisation; {@code StateExtractor.Tok.signature()} already
  * excludes them for exactly this reason.
  *
+ * <h2>Training-only labels: {@code hidden_truth}</h2>
+ *
+ * With {@code -Dmagicnet.labels=true} (default off) each DUMP record carries a
+ * top-level {@code hidden_truth}: for every hidden-region token in
+ * {@code state} -- an aggregate with an {@code r:<zone>} id or a face-down
+ * object the viewer cannot see -- the true multiset of cards it stands for,
+ * keyed by that token's id. It is a target for a belief model, never an
+ * input: it is appended only by {@link #write}/{@link #writeChoice}, after the
+ * body the agent sees was built, so {@link #asRequest} cannot carry it (and
+ * refuses a body that does). Default off so an ordinary run's dump is exactly
+ * what a live agent would have been sent.
+ *
  * <h2>Schema stability</h2>
  *
  * {@code schema} is bumped on any change that would silently alter the meaning
@@ -77,8 +89,12 @@ public final class Serializer {
      * untracked token and back to a live token when a card of that name shows
      * up again. Ability/mode text loses Forge's bracketed run context and
      * player names.
+     * 15: hidden-region count aggregates (opponent hand, library remainder,
+     * sideboard) carry a top-level {@code id} {@code "r:<zone>"}, so an id on a
+     * {@code library_card} no longer implies one physical card. Records may
+     * carry the training-only {@code hidden_truth} (see above).
      */
-    public static final int SCHEMA = 14;
+    public static final int SCHEMA = 15;
 
     /** A priority decision: which spell or ability to play. */
     public static final String KIND_ABILITY = "ability";
@@ -87,6 +103,23 @@ public final class Serializer {
     public static final String PASS_API = "Pass";
 
     private static final String FILE = System.getProperty("magicnet.jsonl", "");
+
+    /** Training-only hidden-information labels in the dump (never in requests). */
+    public static final boolean LABELS = Boolean.getBoolean("magicnet.labels");
+
+    /** Record field holding the labels. */
+    static final String HIDDEN_TRUTH = "hidden_truth";
+
+    /**
+     * Labels of bodies built but not yet written, keyed by the body INSTANCE.
+     * The body is what the agent is sent, so the labels live beside it, never
+     * in it.
+     */
+    private static final java.util.Map<String, String> pendingTruth =
+            new java.util.IdentityHashMap<>();
+    private static final AtomicLong LABELLED = new AtomicLong();
+    private static final AtomicLong LABEL_REGIONS = new AtomicLong();
+    private static final AtomicLong LABEL_NO_ORACLE = new AtomicLong();
 
     private static final AtomicInteger GAME = new AtomicInteger(-1);
     private static final AtomicLong DECISION = new AtomicLong();
@@ -113,6 +146,7 @@ public final class Serializer {
         GAME.incrementAndGet();
         DECISION.set(0);
         emitted.clear();
+        pendingTruth.clear();
     }
 
     /** Index of the game currently being played. */
@@ -138,6 +172,10 @@ public final class Serializer {
         System.out.printf("  passes:          %d%n", PASSES.get());
         System.out.printf("  unaddressable:   %d%n", UNADDRESSABLE.get());
         System.out.printf("  history resyncs: %d%n", RESYNCS.get());
+        if (LABELS) {
+            System.out.printf("  hidden_truth:    %d records, %d regions, %d cards without oracle_id%n",
+                    LABELLED.get(), LABEL_REGIONS.get(), LABEL_NO_ORACLE.get());
+        }
         if (UNADDRESSABLE.get() > 0) {
             System.out.println("  WARN: chosen action absent from pool; those records"
                     + " cannot be replayed and must not be used as labels");
@@ -314,7 +352,68 @@ public final class Serializer {
         sb.append(']');
 
         sb.append(",\"actions\":[").append(optionsJson).append(']');
-        return sb.toString();
+        String body = sb.toString();
+        if (LABELS && enabled()) {
+            pendingTruth.put(body, truthJson(tokens, histSize));
+        }
+        return body;
+    }
+
+    /**
+     * The {@code hidden_truth} array: one label per hidden-region state token,
+     * in token order. Cards are grouped by (name, oracle_id), sorted by name.
+     */
+    private static String truthJson(List<StateExtractor.Tok> tokens, int histSize) {
+        StringBuilder sb = new StringBuilder(256).append('[');
+        boolean first = true;
+        for (int i = histSize; i < tokens.size(); i++) {
+            StateExtractor.Tok t = tokens.get(i);
+            Object region = t.props.get("id");
+            if (t.truth == null || region == null) {
+                continue;
+            }
+            java.util.TreeMap<String, String[]> keys = new java.util.TreeMap<>();
+            java.util.Map<String, Integer> counts = new java.util.HashMap<>();
+            for (forge.game.card.Card c : t.truth) {
+                String[] nid = OracleIds.truthOf(c);
+                if (nid[1] == null) {
+                    LABEL_NO_ORACLE.incrementAndGet();
+                }
+                String k = nid[0] + "\0" + nid[1];
+                keys.putIfAbsent(k, nid);
+                counts.merge(k, 1, Integer::sum);
+            }
+            if (!first) {
+                sb.append(',');
+            }
+            first = false;
+            LABEL_REGIONS.incrementAndGet();
+            sb.append("{\"region\":\"").append(esc(String.valueOf(region))).append("\",\"cards\":[");
+            boolean firstCard = true;
+            for (java.util.Map.Entry<String, String[]> e : keys.entrySet()) {
+                if (!firstCard) {
+                    sb.append(',');
+                }
+                firstCard = false;
+                String[] nid = e.getValue();
+                sb.append("{\"oracle_id\":");
+                sb.append(nid[1] == null ? "null" : "\"" + esc(nid[1]) + "\"");
+                sb.append(",\"name\":");
+                sb.append(nid[0] == null ? "null" : "\"" + esc(nid[0]) + "\"");
+                sb.append(",\"count\":").append(counts.get(e.getKey())).append('}');
+            }
+            sb.append("],\"total\":").append(t.truth.size()).append('}');
+        }
+        return sb.append(']').toString();
+    }
+
+    /** Appends the pending labels of {@code body}, if any, to a dump record. */
+    private static void appendTruth(StringBuilder sb, String body) {
+        String truth = pendingTruth.remove(body);
+        if (truth != null) {
+            sb.append(",\"").append(HIDDEN_TRUTH).append("\":").append(truth);
+            LABELLED.incrementAndGet();
+        }
     }
 
     /** Appends a plain integer outcome and writes the record. */
@@ -330,6 +429,7 @@ public final class Serializer {
             if (chosen < 0) {
                 PASSES.incrementAndGet();
             }
+            appendTruth(sb, body);
             sb.append(",\"chosen\":").append(chosen);
             sb.append(",\"chosen_match\":\"")
               .append(chosen < 0 ? "pass" : "index").append("\"}");
@@ -343,6 +443,10 @@ public final class Serializer {
 
     /** The agent-facing request: a complete JSON object with no chosen fields. */
     public static String asRequest(String body) {
+        // Labels are appended only on the dump path; this is the backstop.
+        if (body.contains("\"" + HIDDEN_TRUTH + "\"")) {
+            throw new IllegalStateException("request body carries " + HIDDEN_TRUTH);
+        }
         return body + "}";
     }
 
@@ -357,6 +461,7 @@ public final class Serializer {
                 out = new PrintWriter(new FileWriter(FILE));
             }
             StringBuilder sb = new StringBuilder(body.length() + 48).append(body);
+            appendTruth(sb, body);
             SpellAbility pick = (chosen == null || chosen.isEmpty()) ? null : chosen.get(0);
             if (pick == null) {
                 PASSES.incrementAndGet();

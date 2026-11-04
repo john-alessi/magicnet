@@ -115,6 +115,8 @@ class Registry:
     patterns: list[KeyPattern]  # in match order: first match wins
     role_java_exprs: tuple[str, ...] = ()
     record_fields: tuple[str, ...] = ()
+    # Fields inside a record's training-only ``hidden_truth`` labels (schema 15).
+    label_fields: tuple[str, ...] = ()
 
     def resolve(self, key: str) -> tuple[str, KeyEntry]:
         """(source, entry): source is "registry", "pattern" or "derived"."""
@@ -190,7 +192,8 @@ def load_registry(keys_path: Path = KEYS_PATH, counters_path: Path = COUNTERS_PA
                                           notes, pattern=p.pattern)
         elif p.expand is not None:
             raise ValueError(f"unknown expansion {p.expand!r} for {p.pattern}")
-    return Registry(keys, patterns, tuple(raw.get("role_java_exprs", ())), tuple(raw.get("record_fields", ())))
+    return Registry(keys, patterns, tuple(raw.get("role_java_exprs", ())), tuple(raw.get("record_fields", ())),
+                    tuple(raw.get("label_fields", ())))
 
 
 def estimate_tokens(texts: list[str]) -> int:

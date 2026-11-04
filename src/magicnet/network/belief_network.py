@@ -1,45 +1,43 @@
 import torch
-from ..schema import ZONES, ZONE_VOCAB_SIZE, RELATION_VOCAB_SIZE
+import zuko
+
 from .encoders import *
 from .constants import *
+from .relational_attention import RelationBlock
 
 
 class BeliefNetwork(torch.nn.Module):
     def __init__(
         self,
-        d_attn = 64,
         n_blocks = 4,
     ):
         super().__init__()
         self.object_encoder = ComponentSetEncoder()
         self.event_encoder = ComponentSetEncoder()
-        self.relation_encoder = RelationEncoder(d_attn)
+        self.relation_encoder = RelationEncoder()
         self.transformer_blocks = torch.nn.ModuleList([
-            RelationalAttention(d_attn) for _ in range(n_blocks)
+            RelationBlock() for _ in range(n_blocks)
         ])
+        self.flow = zuko.flows.NSF(
+            features = EXTERNAL_EMBEDDING_DIM,
+            context=TOKEN_DIM,
+            transforms=N_FLOW_TRANSFORMS,
+            passes=2,
+            hidden_features=(FLOW_DIM,FLOW_DIM)
+        )
 
-    def forward(self, game_state: dict):
+    def forward(self, game_state: dict, targets=None, n_samples=0):
         tokens = torch.cat((
             self.object_encoder(game_state['state']),
             self.event_encoder(game_state['history']),
         ), dim=0)
-        edge_emb, edge_pairs = self.relation_encoder(game_state['edges'], game_state['history']['num_tokens'] + game_state['state']['num_tokens'])
+        edge_emb, edge_pairs = self.relation_encoder(
+            game_state['edges'], game_state['history']['num_tokens'] + game_state['state']['num_tokens'])
         for attn in self.transformer_blocks:
             tokens = attn(tokens, edge_emb, edge_pairs)
         unknown_cards = tokens[game_state['unknown_cards'], :]
-        breakpoint()
-        raise NotImplementedError
-
-class RelationalAttention(torch.nn.Module):
-    def __init__(
-        self,
-        d_attn,
-        n_heads=4,
-    ):
-        super().__init__()
-        self.n_heads = n_heads
-        self.head_dim = TOKEN_DIM // n_heads
-        self.qkv = torch.nn.Linear(TOKEN_DIM, 3*TOKEN_DIM)
-
-    def forward(self, tokens, edge_emb, edge_pairs):
-        return tokens
+        distribution = self.flow(unknown_cards)
+        return (
+            distribution.rsample((n_samples,)) if n_samples > 0 else None,
+            -distribution.log_prob(targets) if targets else None,
+        )

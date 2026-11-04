@@ -297,6 +297,59 @@ External action sources (`socket`, `random`, `replay`) default to
 `-Dmagicnet.targetmode=engine`, the rollback-capable `PlaySpellAbility` path;
 AI-only runs keep `baseline`. Set the property explicitly to override.
 
+## Hidden-information labels (`-Dmagicnet.labels=true`, schema 15)
+
+Training-only targets for a belief model (one conditional density per hidden
+region, conditioned on that region's token). Off by default.
+
+**Regions** are the state tokens that stand for cards the viewer cannot see,
+each with a stable top-level `id` (a join key, `identity` in `keys.json`,
+dropped by `strip_ids`; `magicnet.dump.is_region` tests for one):
+
+| region | token | id |
+|---|---|---|
+| opponent's unseen hand | `library_card` `count` aggregate in `opp_hand` | `r:opp_hand` |
+| opponent's library minus cards at a known position | `library_card` `count` aggregate in `opp_library` | `r:opp_library` |
+| opponent's unseen sideboard | `library_card` `count` aggregate in `opp_sideboard` | `r:opp_sideboard` |
+| each face-down object the viewer cannot see | nameless `game_object` (battlefield, exile) | its card id `c<N>` |
+
+Not regions: the viewer's own library (its name histogram is already
+visible), named cards at known library positions, `known_by_reveal` hand
+cards, `*_untracked` and phantom tokens. Schema 15 is the `r:<zone>` ids:
+before it, an id on a card token meant one physical card (consumers that
+relied on that -- `GameHistory.decorate`, the validator's replay -- now test
+`r:` explicitly).
+
+With labels on, every **dump** record carries a top-level `hidden_truth`
+(a sibling of `state`, never inside a token), one entry per region token in
+`state`, in token order:
+
+    "hidden_truth":[
+      {"region":"r:opp_hand","cards":[
+         {"oracle_id":"a3fb7228-...","name":"Mountain","count":2},
+         {"oracle_id":"fcb7c93c-...","name":"Screaming Nemesis","count":2}, ...],"total":7},
+      {"region":"r:opp_library","cards":[...],"total":49},
+      {"region":"r:opp_sideboard","cards":[...],"total":15},
+      {"region":"c52","cards":[{"oracle_id":"bde976c6-...","name":"Gudul Lurker","count":1}],"total":1}]
+
+`total` equals the region's `count` (1 for a face-down object); cards are
+grouped by (name, oracle_id) and sorted by name; a face-down object is
+labelled with its real face. `[]` means labels were on and there was no
+region; an absent field means labels were off.
+
+**Leak protection.** The labels are computed beside the record body, keyed by
+the body instance, and appended only by `Serializer.write`/`writeChoice`; the
+body sent to an agent (`Serializer.asRequest`) is built before and never
+contains them, and `asRequest` throws if it ever did. With a socket agent and
+a dump, the dump is labelled and the requests are not. The Python side
+rejects a live request carrying `hidden_truth`
+(`HistoryReassembler.absorb(..., where="live request")`, which the agent
+uses), and `scripts/validate_dump.py` checks that every region has exactly
+one label with the right total, labels only name regions of their record,
+no label sits inside `hist_new`/`state`/`actions`, and no live request
+(`chosen_match` "pending") carries labels. Turning labels on changes nothing
+else: seeded games and every other byte of the dump are identical.
+
 ## Gotchas
 
 - Card tokens carry `oracle_id` (and `source_oracle_id` on stack items and

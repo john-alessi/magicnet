@@ -70,6 +70,22 @@ public final class StateExtractor {
     }
 
     /**
+     * Schema 15: the id of a hidden REGION aggregate (the opponent's unseen
+     * hand, library remainder or sideboard), {@code "r:" + zone}. A join key
+     * only -- it pairs the aggregate with its training label in the record's
+     * {@code hidden_truth}, and lets history handles resolve to it. Stable
+     * across decisions and runs (one aggregate per zone), so it carries no
+     * information beyond the zone the token already states.
+     */
+    static String regionRef(String zoneName) {
+        return "r:" + zoneName;
+    }
+
+    static boolean isRegionRef(Object id) {
+        return id instanceof String && ((String) id).startsWith("r:");
+    }
+
+    /**
      * Ref for an entity that may be either. A combat defender is a player, a
      * planeswalker, or a battle; the latter two are cards.
      */
@@ -94,6 +110,13 @@ public final class StateExtractor {
         final List<String[]> edges = new ArrayList<>(2);
         /** Stack items only: id of the spell's card, for handle assignment. Not serialized. */
         int spellCard = -1;
+        /**
+         * Hidden regions only: the true cards this token stands for (the
+         * aggregate's members, or a face-down object's real card). Never
+         * serialized into the token; {@link Serializer} turns it into the
+         * record's training-only {@code hidden_truth} when labels are on.
+         */
+        List<Card> truth;
 
         Tok(String type, String zone) {
             this.type = type;
@@ -371,8 +394,8 @@ public final class StateExtractor {
                 return;
             }
 
-            int hiddenSideboard = 0;
-            int hiddenHand = 0;
+            List<Card> hiddenSideboard = new ArrayList<>();
+            List<Card> hiddenHand = new ArrayList<>();
             for (Card c : cards) {
                 boolean visible = self;
                 boolean knownByReveal = false;
@@ -381,7 +404,7 @@ public final class StateExtractor {
                     // unless they may look at the card (e.g. it was revealed).
                     visible = canBeShownTo(c, viewer);
                     if (!visible) {
-                        hiddenSideboard++;
+                        hiddenSideboard.add(c);
                         continue;
                     }
                 } else if (!self && z == ZoneType.Hand) {
@@ -392,7 +415,7 @@ public final class StateExtractor {
                     if (!visible) {
                         // Schema 13: unseen opponent hand cards are one count
                         // aggregate (below), like the hidden library/sideboard.
-                        hiddenHand++;
+                        hiddenHand.add(c);
                         continue;
                     }
                 }
@@ -413,16 +436,15 @@ public final class StateExtractor {
                     emitMergeComponents(out, c, side);
                 }
             }
-            if (hiddenHand > 0) {
+            if (!hiddenHand.isEmpty()) {
                 // Schema 13. Individual nameless hand tokens carried nothing but
                 // an id, and that id is exactly what must not be exposed: a
                 // tracking handle assigned to one would say WHICH unseen card a
                 // history event refers to. A handle the viewer can only place
                 // "somewhere in the opponent's hand" is assigned here.
-                out.add(new Tok("library_card", zoneName)
-                        .p("count", hiddenHand));
+                out.add(region(zoneName, hiddenHand));
             }
-            if (hiddenSideboard > 0) {
+            if (!hiddenSideboard.isEmpty()) {
                 // Hidden opponent sideboard cards collapse to one count, exactly
                 // like the hidden remainder of an opponent library and for the
                 // same reason: unseen copies share no distinguishing fact, so N
@@ -434,12 +456,20 @@ public final class StateExtractor {
                 // options resolve to -- a count=15 game_object would break that.
                 // No position: the sideboard is unordered.
                 // No name: an unseen card has none, and absence means unknown.
-                out.add(new Tok("library_card", zoneName)
-                        .p("count", hiddenSideboard));
+                out.add(region(zoneName, hiddenSideboard));
             }
         } catch (Throwable ignored) {
             // skip zone
         }
+    }
+
+    /** A hidden-region count aggregate (schema 15: with its region id and truth). */
+    private static Tok region(String zoneName, List<Card> members) {
+        Tok t = new Tok("library_card", zoneName)
+                .p("id", regionRef(zoneName))
+                .p("count", members.size());
+        t.truth = members;
+        return t;
     }
 
     private static void emitMergeComponents(List<Tok> out, Card host, String side) {
@@ -563,8 +593,13 @@ public final class StateExtractor {
         }
 
         if (!self) {
-            out.add(new Tok("library_card", zoneName)
-                    .p("count", unknown));
+            List<Card> members = new ArrayList<>(unknown);
+            for (Card c : lib) {
+                if (LibraryKnowledge.constraintFor(viewer, c) == null) {
+                    members.add(c);
+                }
+            }
+            out.add(region(zoneName, members));
             return;
         }
 
@@ -616,6 +651,10 @@ public final class StateExtractor {
                 t.p("name", c.getName());
                 t.p("oracle_id", OracleIds.of(c));
                 t.p("state", String.valueOf(c.getCurrentStateName()));
+            } else if (!hidden) {
+                // A face-down object the viewer cannot see is its own hidden
+                // region, keyed by its card id; the label is the real card.
+                t.truth = java.util.Collections.singletonList(c);
             }
 
             if (z == ZoneType.Battlefield) {

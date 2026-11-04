@@ -714,7 +714,9 @@ public final class GameHistory {
             if (!"game_object".equals(t.type) && !"library_card".equals(t.type)) {
                 continue;
             }
-            if (id != null) {
+            // Schema 15: a hidden-region aggregate carries an "r:<zone>" id, but
+            // it is still the aggregate, not an object a handle can resolve to by id.
+            if (id != null && !StateExtractor.isRegionRef(id)) {
                 if (!isIndividualHidden(t)) {
                     byId.put(String.valueOf(id), t);
                 }
@@ -769,7 +771,8 @@ public final class GameHistory {
         if (!"game_object".equals(t.type) && !"library_card".equals(t.type)) {
             return false;
         }
-        if (t.props.get("name") != null || t.zone == null) {
+        if (t.props.get("name") != null || t.zone == null
+                || StateExtractor.isRegionRef(t.props.get("id"))) {
             return false;
         }
         return t.zone.endsWith("_hand") || t.zone.endsWith("_library") || t.zone.endsWith("_sideboard");

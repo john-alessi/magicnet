@@ -28,8 +28,9 @@ def _nest(flat: dict) -> dict:
 
 
 SELF = _nest({"type": "player", "id": "p0", "side": "self"})
-SIDEBOARD = _nest({"type": "library_card", "zone": "opp_sideboard", "count": 15})
-OPP_HAND = _nest({"type": "library_card", "zone": "opp_hand", "count": 3})
+# Schema 15: hidden-region aggregates carry an r:<zone> join key.
+SIDEBOARD = _nest({"type": "library_card", "zone": "opp_sideboard", "id": "r:opp_sideboard", "count": 15})
+OPP_HAND = _nest({"type": "library_card", "zone": "opp_hand", "id": "r:opp_hand", "count": 3})
 UNTRACKED = {"type": "library_card", "zone": "opp_untracked"}
 
 
@@ -399,3 +400,73 @@ def test_layout_flags_host_dependent_ability_text() -> None:
         "placeholder in gained": 1, "host name in gained": 1, "object id in gained": 1,
         "activator in gained": 1, "player name in gained": 1,
     }
+
+
+# ---- schema 15: training-only hidden_truth labels -------------------------
+
+FACE_DOWN = _nest({"type": "game_object", "zone": "opp_battlefield", "id": "c9", "face_down": True})
+
+
+def _label(region: str, *cards: tuple[str, int], total: int | None = None) -> dict:
+    out = [{"oracle_id": f"o-{name}", "name": name, "count": n} for name, n in cards]
+    return {"region": region, "cards": out, "total": sum(n for _, n in cards) if total is None else total}
+
+
+def _labelled(tmp_path: Path, state: list[dict], truth, **rec) -> dict:
+    path = tmp_path / "l.jsonl"
+    path.write_text(json.dumps({
+        "schema": SUPPORTED_SCHEMA, "game": 0, "decision": 0, "viewer": "P0", "turn": 1,
+        "phase": "MAIN1", "hist_from": 0, "hist_new": [], "hist_total": 0, "state": state,
+        "actions": [], "hidden_truth": truth, "chosen": 0, "chosen_match": "pass", **rec,
+    }) + "\n")
+    return dict(validate_dump.check_labels(path, 0)[0])
+
+
+STATE = [SELF, OPP_HAND, SIDEBOARD, FACE_DOWN]
+TRUTH = [_label("r:opp_hand", ("Bolt", 2), ("Shock", 1)), _label("r:opp_sideboard", ("Duress", 15)),
+         _label("c9", ("Bear", 1))]
+
+
+def test_labels_matching_every_region_pass(tmp_path: Path) -> None:
+    assert _labelled(tmp_path, STATE, TRUTH) == {}
+
+
+def test_label_total_must_equal_the_region_count(tmp_path: Path) -> None:
+    bad = [_label("r:opp_hand", ("Bolt", 2))] + TRUTH[1:]
+    assert _labelled(tmp_path, STATE, bad) == {"label total != region count (opp_hand)": 1}
+
+
+def test_every_region_needs_a_label_and_labels_need_a_region(tmp_path: Path) -> None:
+    assert _labelled(tmp_path, STATE, TRUTH[1:]) == {"region without a label (opp_hand)": 1}
+    assert _labelled(tmp_path, [SELF, SIDEBOARD, FACE_DOWN], TRUTH) == {
+        "label for a region token absent from the record": 1}
+
+
+def test_a_label_inside_the_observation_fails(tmp_path: Path) -> None:
+    leaked = dict(OPP_HAND, components=dict(OPP_HAND["components"], hidden_truth=TRUTH[0]))
+    assert _labelled(tmp_path, [SELF, leaked, SIDEBOARD, FACE_DOWN], TRUTH) == {
+        "label inside the observation at state": 1}
+    assert _labelled(tmp_path, STATE + [dict(TRUTH[0])], TRUTH) == {
+        "label inside the observation at state": 1}
+
+
+def test_a_live_request_never_carries_labels(tmp_path: Path) -> None:
+    assert _labelled(tmp_path, STATE, TRUTH, chosen=-1, chosen_match="pending") == {
+        "live request (no outcome) carries hidden_truth": 1}
+
+
+def test_region_ids_are_join_keys_only() -> None:
+    from magicnet.dump import is_region, strip_ids
+    assert [is_region(t) for t in STATE] == [False, True, True, True]
+    assert all("id" not in t for t in strip_ids(STATE))
+
+
+def test_live_request_with_hidden_truth_is_rejected() -> None:
+    import pytest
+    from magicnet.dump import LIVE_REQUEST, HistoryReassembler, SchemaError
+    rec = {"schema": SUPPORTED_SCHEMA, "game": 0, "decision": 0, "viewer": "P0", "turn": 1,
+           "phase": "MAIN1", "hist_from": 0, "hist_new": [], "hist_total": 0, "state": STATE,
+           "actions": [], "hidden_truth": TRUTH}
+    with pytest.raises(SchemaError, match="hidden_truth"):
+        HistoryReassembler().absorb(rec, where=LIVE_REQUEST)
+    assert HistoryReassembler().absorb(rec).hidden_truth == TRUTH

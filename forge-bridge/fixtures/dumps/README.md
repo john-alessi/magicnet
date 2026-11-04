@@ -6,7 +6,8 @@ and must be regenerated after a schema bump.
 
 ## pio_mrp.jsonl
 12 AI-vs-AI games, Mono-Red Prowess mirror (`fixtures/pio_mrp`), seed 7,
-combat and choice routing on, **schema 14** (model inputs under each token's
+combat and choice routing on, **schema 15**, **with hidden-information
+labels** (model inputs under each token's
 `components`; read them with `magicnet.dump.comp(tok, key)`; abilities as the
 `gained`/`lost` difference from the printed card, plus `base_power`/`base_toughness`;
 history as one event per token with role edges to tracking handles, events and
@@ -15,9 +16,23 @@ players -- resolve them with `magicnet.dump.resolve_edges`; see
 from `forge-bridge/`:
 
     java -Xmx2048m -Dmagicnet.actions=ai -Dmagicnet.choices=true -Dmagicnet.combat=true \
-         -Dmagicnet.jsonl=fixtures/dumps/pio_mrp.jsonl \
+         -Dmagicnet.labels=true -Dmagicnet.jsonl=fixtures/dumps/pio_mrp.jsonl \
          -cp "build:/usr/share/java/forge-gui-desktop.jar" magicnet.bridge.Harness \
          --decks fixtures/pio_mrp --games 12 --out OUTDIR --seed 7 --timeout 900
+
+### `hidden_truth` (training-only)
+
+Every record carries a top-level `hidden_truth`: for each hidden-region token
+in `state` -- the opponent's unseen hand, library remainder and sideboard
+aggregates (`id` `r:opp_hand`, `r:opp_library`, `r:opp_sideboard`) and any
+face-down object the viewer cannot see (its card id) -- the true cards it
+stands for, `{"region": <token id>, "cards": [{"oracle_id", "name", "count"}],
+"total": <the token's count>}`. Read it as `Decision.hidden_truth`; pair a
+label with its region token by `id` **before** `strip_ids`. It is a belief-model
+target, never a model input, and is never sent to a live agent. See
+`forge-bridge/README.md`, "Hidden-information labels". E.g. game 3 decision
+271 (P0): `r:opp_hand` total 3, `r:opp_library` total 48, `r:opp_sideboard`
+total 15.
 
 Hand-picked decisions with heavily modified permanents. "Monster" is the
 Monster Role token (`types` "Enchantment - Aura Role"), joined to its creature
@@ -26,7 +41,9 @@ by an `attached_to` edge; its +1/+1 and Trample show up on the creature as
 back to it. Spell and trigger pumps (Monstrous Rage, prowess) are
 `affected_by` edges from the creature to those history `resolve` events
 (schema 13; they replace `temp_power`). Regenerated at schema 14 from the same
-seed: the games are identical, so the picks below are unchanged.
+seed: the games are identical, so the picks below are unchanged. Regenerated
+again at schema 15 with labels: apart from the `r:<zone>` ids and
+`hidden_truth`, every record is identical to the schema-14 dump.
 
 | game | decision | viewer | turn | why |
 |---|---|---|---|---|

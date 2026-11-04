@@ -5,18 +5,16 @@ from ..schema import ZONES
 class RelationEncoder(torch.nn.Module):
     def __init__(
         self,
-        relation_dim,
     ):
         super().__init__()
-        self.relation_dim = relation_dim
-        self.emb = torch.nn.Embedding(len(RELATIONS), relation_dim)
+        self.emb = torch.nn.Embedding(len(RELATIONS), TOKEN_DIM)
 
     def forward(self, edges, n_tokens):
         distinct, counts = torch.unique(edges, dim=0, return_counts=True)
         emb = self.emb(distinct[:,0])
         emb = emb * torch.log1p(counts.float())[:,None]
         pairs, inv = torch.unique(distinct[:,1:], dim=0, return_inverse=True)
-        summed = emb.new_zeros(len(pairs), self.relation_dim).index_add(0, inv, emb)
+        summed = emb.new_zeros(len(pairs), TOKEN_DIM).index_add(0, inv, emb)
         return (summed, pairs)
 
 class ComponentSetEncoder(torch.nn.Module):

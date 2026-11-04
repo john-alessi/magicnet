@@ -13,6 +13,7 @@ dependencies = [
     "torch>=2.14.1",
     "tqdm>=4.70.1",
     "uvicorn>=0.54.0",
+    "zuko>=1.6.0",
 ]
 
 [project.scripts]
