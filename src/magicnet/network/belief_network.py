@@ -9,7 +9,7 @@ from .relational_attention import RelationBlock
 class BeliefNetwork(torch.nn.Module):
     def __init__(
         self,
-        n_blocks = 4,
+        n_blocks = 20,
     ):
         super().__init__()
         self.object_encoder = ComponentSetEncoder()
@@ -19,7 +19,7 @@ class BeliefNetwork(torch.nn.Module):
             RelationBlock() for _ in range(n_blocks)
         ])
         self.flow = zuko.flows.NSF(
-            features = EXTERNAL_EMBEDDING_DIM,
+            features = 64,
             context=TOKEN_DIM,
             transforms=N_FLOW_TRANSFORMS,
             passes=2,
