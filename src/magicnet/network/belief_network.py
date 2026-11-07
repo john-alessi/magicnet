@@ -12,6 +12,7 @@ class BeliefNetwork(torch.nn.Module):
         n_blocks = 5,
     ):
         super().__init__()
+        self.register_buffer('raw_embedding_cache', torch.empty(0, EXTERNAL_EMBEDDING_DIM, dtype=torch.float32), persistent=False)
         self.object_encoder = ComponentSetEncoder()
         self.event_encoder = ComponentSetEncoder()
         self.relation_encoder = RelationEncoder()
@@ -21,9 +22,13 @@ class BeliefNetwork(torch.nn.Module):
         self.hidden_card_flow = ConditionalFlow()
 
     def forward(self, game_state: dict, targets=None, n_samples=0):
+        if self.raw_embedding_cache.shape[0] != game_state['emb_lookup_offset']:
+            raise ValueError(f'offset {game_state['emb_lookup_offset']} out of sync with cache size {self.raw_embedding_cache.shape[0]}')
+        self.raw_embedding_cache = torch.cat((self.raw_embedding_cache, game_state['emb_lookup']))
+
         tokens = torch.cat((
-            self.event_encoder(game_state['history']),
-            self.object_encoder(game_state['state']),
+            self.event_encoder(game_state['history'], self.raw_embedding_cache),
+            self.object_encoder(game_state['state'], self.raw_embedding_cache),
         ), dim=0)
         edge_emb, edge_pairs = self.relation_encoder(game_state['edges'])
         batches, mask = self.batch_tokens(tokens, game_state['batch_indices'], game_state['batch_dim'])

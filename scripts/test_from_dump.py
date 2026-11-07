@@ -1,24 +1,65 @@
 from magicnet.dump import comp, load, resolve_edges
-from magicnet.network.data_loader import load_game
+from magicnet.network.data_loader import DataLoader
 from magicnet.catalog import CatalogClient
-from magicnet.network.magicnet import MagicNet
+from magicnet.network.belief_network import BeliefNetwork
 import torch
 from torch.profiler import profile, record_function, ProfilerActivity
+import time
+from magicnet.network.constants import EXTERNAL_EMBEDDING_PCA_DIM
 
 torch.set_default_device('cuda' if torch.cuda.is_available() else 'cpu')
-decision = next(x for x in load("/home/john/Projects/magicnet/forge-bridge/fixtures/dumps/pio_mrp.jsonl") if (x.game, x.decision) == (3, 279))
-board = [s for s in decision.state if 'Creature' in comp(s, 'types', '')]
-catalog = CatalogClient()
-game_state = load_game(decision.state, decision.history, catalog)
-magicnet = MagicNet()
+#torch.set_default_device('cpu')
 
-with profile(
-    activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-    record_shapes=True,     # Saves information about operator input shapes
-    profile_memory=True,    # Tracks tensor memory allocation/deallocation
-    with_stack=True         # Records source file and line numbers
-) as prof:
-    with record_function("model_inference"):
-        decision = magicnet(game_state)
+BATCH_SIZE = 20
 
-print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
+decision1 = next(x for x in load("/home/john/Projects/magicnet/forge-bridge/fixtures/dumps/pio_mrp.jsonl") if (x.game, x.decision) == (3, 50))
+decision2 = next(x for x in load("/home/john/Projects/magicnet/forge-bridge/fixtures/dumps/pio_mrp.jsonl") if (x.game, x.decision) == (3, 10))
+decision3 = next(x for x in load("/home/john/Projects/magicnet/forge-bridge/fixtures/dumps/pio_mrp.jsonl") if (x.game, x.decision) == (3, 279))
+decision4 = next(x for x in load("/home/john/Projects/magicnet/forge-bridge/fixtures/dumps/pio_mrp.jsonl") if (x.game, x.decision) == (3, 270))
+
+games = [
+    {
+        'state': decision.state,
+        'history': decision.history,
+    }
+    for decision in [decision3 for _ in range(BATCH_SIZE)]
+]
+loader = DataLoader(CatalogClient())
+belief_network = BeliefNetwork()
+belief_network.eval()
+inference_time = 0
+load_time = 0
+with torch.inference_mode():
+    for _ in range(1):
+        game_state = loader.load_game(games)
+        _ = belief_network(game_state)
+    torch.cuda.synchronize()
+    for _ in range(5):
+        start = time.perf_counter()
+        game_state = loader.load_game(games)
+        torch.cuda.synchronize()
+        load_time += time.perf_counter() - start
+        mock_targets = torch.zeros(game_state['unknown_cards'].shape[0], EXTERNAL_EMBEDDING_PCA_DIM)
+        start = time.perf_counter()
+        _ = belief_network(game_state, targets=mock_targets)
+        torch.cuda.synchronize()
+        inference_time += time.perf_counter() - start
+    print (f'load time: {load_time}')
+    print(f'inference time: {inference_time}')
+    print(f'amortized inference time: {(inference_time + load_time) / (5*BATCH_SIZE)}')
+
+# with torch.inference_mode():
+#     for _ in range(1):
+#         _ = magicnet(game_state)
+#     torch.cuda.synchronize()
+#     with profile(
+#         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+#         record_shapes=True,     # Saves information about operator input shapes
+#         profile_memory=True,    # Tracks tensor memory allocation/deallocation
+#         with_stack=True         # Records source file and line numbers
+#     ) as prof:
+#         with record_function("model_inference"):
+#             for _ in range(5):
+#                 _ = magicnet(game_state)
+
+# print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
