@@ -9,7 +9,7 @@ class RelationEncoder(torch.nn.Module):
         super().__init__()
         self.emb = torch.nn.Embedding(len(RELATIONS), TOKEN_DIM)
 
-    def forward(self, edges, n_tokens):
+    def forward(self, edges):
         distinct, counts = torch.unique(edges, dim=0, return_counts=True)
         emb = self.emb(distinct[:,0])
         emb = emb * torch.log1p(counts.float())[:,None]
@@ -34,8 +34,9 @@ class ComponentSetEncoder(torch.nn.Module):
     def forward(self, game_state: dict[str, torch.Tensor]):
         components_list = []
         indices_list = []
+        batches_list = []
 
-        if len(game_state['vectors'] > 0):
+        if (game_state['vectors'].numel() > 0):
             components_list.append(
                 torch.cat(
                     (
@@ -48,7 +49,7 @@ class ComponentSetEncoder(torch.nn.Module):
             )
             indices_list.append(game_state['vectors'][:,-1],)
 
-        if len(game_state['scalars'] > 0):
+        if (game_state['scalars'].numel() > 0):
             components_list.append(
                 torch.cat(
                     (
@@ -61,7 +62,7 @@ class ComponentSetEncoder(torch.nn.Module):
             )
             indices_list.append(game_state['scalars'][:,-1],)
 
-        if len(game_state['colors'] > 0):
+        if (game_state['colors'].numel() > 0):
             components_list.append(
                 torch.cat(
                     (
@@ -74,7 +75,7 @@ class ComponentSetEncoder(torch.nn.Module):
             )
             indices_list.append(game_state['colors'][:,-1],)
 
-        if len(game_state['flags'] > 0):
+        if (game_state['flags'].numel() > 0):
             components_list.append(
                 torch.cat(
                     (
@@ -82,12 +83,12 @@ class ComponentSetEncoder(torch.nn.Module):
                         torch.zeros(game_state['flags'].shape[0], COMPONENT_DIM), # value
                         self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['flag'])).unsqueeze(0).expand(game_state['flags'].shape[0], -1), # kind
                     )
-                , dim=-1
+                    , dim=-1
+                )
             )
-        )
-        indices_list.append(game_state['flags'][:,-1],)
+            indices_list.append(game_state['flags'][:,-1],)
         
-        if len(game_state['categoricals'] > 0):
+        if (game_state['categoricals'].numel() > 0):
             components_list.append(
                 torch.cat(
                     (
@@ -97,13 +98,13 @@ class ComponentSetEncoder(torch.nn.Module):
                     )
                     ,dim=-1
                 )
-        )
-        indices_list.append(game_state['categoricals'][:,-1],)
+            )
+            indices_list.append(game_state['categoricals'][:,-1],)
 
         components_unordered = self.component_encoder(torch.cat(components_list, dim=0))
         indices_unordered = torch.cat(indices_list).to(torch.int32)
 
-        objects = self.attn(components_unordered, indices_unordered)
+        objects = self.attn(components_unordered, indices_unordered, game_state['num_tokens'])
 
         return objects
 
@@ -128,8 +129,8 @@ class PooledAttention(torch.nn.Module):
         )
         self.out = torch.nn.Linear(out_dim, out_dim)
 
-    def forward(self, components_unordered, indices_unordered):
-        padded, mask = self.group_components(components_unordered, indices_unordered)
+    def forward(self, components_unordered, indices_unordered, num_tokens):
+        padded, mask = self.group_components(components_unordered, indices_unordered, num_tokens)
         n_objects, L, _ = padded.shape
         k = self.k(padded).view(n_objects, L, self.n_heads, self.dh)
         v = self.v(padded).view(n_objects, L, self.n_heads, self.dv)
@@ -140,17 +141,16 @@ class PooledAttention(torch.nn.Module):
         return self.out(game_objects)
 
 
-    def group_components(self, components_unordered, indices_unordered):
-        n_objects = torch.unique(indices_unordered).numel() + 1
+    def group_components(self, components_unordered, indices_unordered, num_tokens):
         order = torch.argsort(indices_unordered, stable=True)
         components = components_unordered[order]
         indices = indices_unordered[order]
-        counts = torch.bincount(indices)
+        counts = torch.bincount(indices, minlength=num_tokens)
         start_indices = torch.cumsum(counts, 0) - counts
         positions = torch.arange(len(indices)) - start_indices[indices]
-        padded = components.new_zeros(n_objects, counts.max(), components.shape[-1])
+        padded = components.new_zeros(num_tokens, counts.max(), components.shape[-1])
         padded[indices, positions] = components
-        mask = torch.zeros(n_objects, padded.shape[1], dtype=torch.bool)
+        mask = torch.zeros(num_tokens, padded.shape[1], dtype=torch.bool)
         mask[indices, positions] = True
         return padded, mask
 
