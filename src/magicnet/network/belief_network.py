@@ -35,11 +35,6 @@ class BeliefNetwork(torch.nn.Module):
         for attn in self.transformer_blocks:
             batches = attn(batches, mask, edge_emb, edge_pairs)
         return self.hidden_card_flow(batches, game_state['unknown_cards'], targets, n_samples)
-        distribution = self.flow(unknown_cards)
-        return (
-            distribution.rsample((n_samples,)) if n_samples > 0 else None,
-            -distribution.log_prob(targets) if targets is not None else None,
-        )
 
     def batch_tokens(self, tokens, batch_indices, batch_dim):
         order = torch.argsort(batch_indices, stable=True)
@@ -66,15 +61,13 @@ class ConditionalFlow(torch.nn.Module):
     def forward(self, batches, unknown_cards, targets=None, n_samples=0):
         samples = None
         likelihood = None
-        unknown_cards = batches[unknown_cards[:,0], unknown_cards[:,1], :]
-        distributions = [self.flow(card) for card in unknown_cards]
+        unknown_cards = batches[unknown_cards[:,0], unknown_cards[:,1]]
+        distributions = self.flow(unknown_cards)
 
         if targets is not None:
-            likelihood = torch.tensor([d.log_prob(c) for c,d in zip(targets, distributions)])
+            likelihood = distributions.log_prob(targets)
 
         if n_samples > 0:
-            samples = torch.cat(
-                [d.rsample((n_samples,)) for d in distributions]
-            )
+            samples = distributions.rsample((n_samples,))
 
         return likelihood, samples
