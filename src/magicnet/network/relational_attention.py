@@ -36,7 +36,7 @@ class RelationalAttention(torch.nn.Module):
         dest = edge_pairs[:,1]
         batch = edge_pairs[:,2]
         q, k, v = (
-            torch.einsum('nleh->nhle', head.view(N, L, self.head_dim, REL_ATTENTION_HEADS))
+            head.view(N, L, REL_ATTENTION_HEADS, self.head_dim).transpose(1,2)
             for head in self.qkv(batches).chunk(3,-1)
         )
         a = edge_emb.view(*edge_emb.shape[:-1], REL_ATTENTION_HEADS, self.head_dim) * self.relation_gain[None, :, None]

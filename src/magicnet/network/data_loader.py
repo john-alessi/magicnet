@@ -18,15 +18,15 @@ class DataLoader():
         # each game object component should become a [key, value, kind, idx]
         # vector (where idx corresponds to the parent object index)
 
-        card_names = set(
-            [
-                c['name']
-                for g in games
-                for c in g['state']
-                if 'name' in c and c['type'] in ['game_object'] and c['name'] != 'HIDDEN'
-            ]
-        )
-        #card_metadata = self.catalog.lookup(card_names)
+        # card_names = set(
+        #     [
+        #         c['name']
+        #         for g in games
+        #         for c in g['state']
+        #         if 'name' in c and c['type'] in ['game_object'] and c['name'] != 'HIDDEN'
+        #     ]
+        # )
+        # card_metadata = self.catalog.lookup(card_names)
 
         object_components = []
         event_components = []
@@ -88,10 +88,17 @@ class DataLoader():
                 unknown_cards += [unknown]
 
         for i_batch,game in enumerate(games):
+            id_lookup = {}
+            for i, token in enumerate(game['history'] + game['state']):
+                if 'id' in token:
+                    id_lookup[token['id']] = i
+                if 'handles' in token:
+                    for h in token['handles']:
+                        id_lookup[h] = i
             for i_from, token in enumerate(game['history'] + game['state']):
                 if 'edges' in token:
                     for e in token['edges']:
-                        edges += [(RELATIONS.index(e['rel']), i_from, indexof(e['to'], game['history'], game['state']), i_batch)]
+                        edges += [(RELATIONS.index(e['rel']), i_from, id_lookup[e['to']], i_batch)]
             
         keys = set(k for k,_,_,_ in object_components + event_components)
         vectors = [v for (_,v,kd,_) in object_components + event_components if kd == 'vector']
@@ -139,24 +146,6 @@ class DataLoader():
 
         return lookup_table, offset
 
-    def embed_keys(self, keys: list[str], return_diff_only=True):
-        to_embed = [k for k in keys if k not in self.vector_lookup]
-        key_embeddings = dict(zip(keys, self.catalog.key_vectors(keys)))
-        return self.cache_embeddings(key_embeddings, return_diff_only)
-
-    def embed_strings(self, strings: list[str], return_diff_only=True):
-        to_embed = [s for s in strings if s not in self.vector_lookup]
-        string_embeddings = dict(zip(strings, self.catalog.embed_strings(strings)))
-        return self.cache_embeddings(string_embeddings, return_diff_only)
-
-    def cache_embeddings(self, embedding_table: dict, return_diff_only):
-        self.vector_lookup |= embedding_table
-        id_list = list(self.vector_lookup)
-        lookup_indices = torch.tensor([id_list.index(s) for s in embedding_table.keys()])
-        lookup_table_raw = embedding_table if return_diff_only else self.vector_lookup
-        lookup_table = torch.tensor(np.array(().values()))
-        return lookup_indices, lookup_table
-
     def pack_components(self, components: list, num_tokens: int):
         id_list = list(self.vector_lookup)
 
@@ -198,15 +187,3 @@ class DataLoader():
             'categoricals': categoricals,
             'num_tokens': num_tokens,
         }
-
-def indexof(id: str, history, state):
-        indices = [
-            i for i,v in enumerate(history + state)
-            if ('id' in v and v['id'] == id) or ('handles' in v and id in v['handles'])
-        ]
-        if len(indices) == 0:
-            print(f'could not find object with id {id}')
-        elif len(indices) == 1:
-            return indices[0]
-        else:
-            raise Exception(f'Multiple tokens parsed with id {id}({len(indices)})')

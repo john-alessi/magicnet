@@ -8,7 +8,10 @@ import time
 from magicnet.network.constants import EXTERNAL_EMBEDDING_PCA_DIM
 
 torch.set_default_device('cuda' if torch.cuda.is_available() else 'cpu')
-#torch.set_default_device('cpu')
+torch.set_float32_matmul_precision("high")
+#torch.autocast("cuda", dtype=torch.bfloat16)
+
+#from torch.nn.attention import sdpa_kernel, SDPBackend
 
 BATCH_SIZE = 20
 
@@ -41,25 +44,27 @@ with torch.inference_mode():
         load_time += time.perf_counter() - start
         mock_targets = torch.zeros(game_state['unknown_cards'].shape[0], EXTERNAL_EMBEDDING_PCA_DIM)
         start = time.perf_counter()
-        _ = belief_network(game_state, targets=mock_targets)
+        _ = belief_network(game_state, n_samples=100)
         torch.cuda.synchronize()
         inference_time += time.perf_counter() - start
     print (f'load time: {load_time}')
     print(f'inference time: {inference_time}')
     print(f'amortized inference time: {(inference_time + load_time) / (5*BATCH_SIZE)}')
 
-# with torch.inference_mode():
-#     for _ in range(1):
-#         _ = magicnet(game_state)
-#     torch.cuda.synchronize()
-#     with profile(
-#         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-#         record_shapes=True,     # Saves information about operator input shapes
-#         profile_memory=True,    # Tracks tensor memory allocation/deallocation
-#         with_stack=True         # Records source file and line numbers
-#     ) as prof:
-#         with record_function("model_inference"):
-#             for _ in range(5):
-#                 _ = magicnet(game_state)
+with torch.inference_mode():
+    torch.cuda.synchronize()
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        record_shapes=True,     # Saves information about operator input shapes
+        profile_memory=True,    # Tracks tensor memory allocation/deallocation
+        with_stack=True         # Records source file and line numbers
+    ) as prof:
+        with record_function("model_inference"):
+            for _ in range(5):
+                game_state = loader.load_game(games)
+                mock_targets = torch.zeros(game_state['unknown_cards'].shape[0], EXTERNAL_EMBEDDING_PCA_DIM)
+                torch.cuda.synchronize()
+                _ = belief_network(game_state, n_samples=100)
+                torch.cuda.synchronize()
 
-# print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
+print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
