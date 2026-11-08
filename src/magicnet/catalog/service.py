@@ -10,6 +10,9 @@ The same service hosts the key catalog (component-key descriptions, see
 keys.py) and an embedding cache for arbitrary short strings. String misses are
 embedded in a worker thread; a string already being embedded is awaited, not
 embedded again.
+
+It also serves the frozen PCA bases (``GET /pca``) and the drift log that
+refreshes append to (``GET /pca/drift``). The service never fits a basis.
 """
 
 from __future__ import annotations
@@ -31,7 +34,8 @@ from pydantic import BaseModel
 from magicnet.catalog.embedder import Embedder
 from magicnet.catalog.keys import Registry, registry_from_rows
 from magicnet.catalog.scryfall import ScryfallSource
-from magicnet.catalog.store import EMBED_CHUNK, CatalogStore, Resolved, parse_ts, sha256
+from magicnet.catalog.store import (DRIFT_MARGIN, EMBED_CHUNK, CatalogStore, Resolved, parse_ts,
+                                    sha256)
 
 log = logging.getLogger("magicnet.catalog")
 
@@ -57,9 +61,11 @@ class CatalogService:
         check_interval: float = 300.0,
         negative_ttl: float = 12 * 3600.0,
         clock: Callable[[], float] = time.monotonic,
+        drift_margin: float = DRIFT_MARGIN,
     ):
         self.db_path = Path(db_path)
-        self.store = CatalogStore(self.db_path)
+        self.drift_margin = drift_margin
+        self.store = CatalogStore(self.db_path, drift_margin=drift_margin)
         self.source = source
         self.embedder_factory = embedder_factory
         self.dump_dir = Path(dump_dir)
@@ -272,7 +278,7 @@ class CatalogService:
         if not dest.exists():
             self.dump_dir.mkdir(parents=True, exist_ok=True)
             self.source.download(meta, dest)
-        store = CatalogStore(self.db_path)  # own connection: this runs off the event loop
+        store = CatalogStore(self.db_path, drift_margin=self.drift_margin)  # own connection: off the event loop
         try:
             report = store.refresh_from_dump(
                 dest,
@@ -424,6 +430,42 @@ def create_app(service: CatalogService) -> FastAPI:
             "results": [{"text": t, "cached": t in cached, "vector": _vec(vecs[t], req.encoding)}
                         for t in dict.fromkeys(req.strings)],
         }
+
+    @app.get("/pca")
+    async def pca_basis(basis_id: int | None = None, as_of: int | None = None,
+                        components: int | None = Query(None, ge=1)) -> dict:
+        """A stored PCA basis: by id, else the one current at ``as_of`` (default
+        latest). Arrays are base64 little-endian float32; ``components=d``
+        returns only the first d components."""
+        if basis_id is None:
+            as_of = service.check_as_of(as_of)
+            basis_id = store.pca_current_id(as_of)
+            if basis_id is None:
+                raise HTTPException(404, "no PCA basis has been fit; run `python -m magicnet.catalog pca-fit`")
+        try:
+            b = store.pca_basis(basis_id)
+        except KeyError:
+            raise HTTPException(404, f"no PCA basis {basis_id}") from None
+        d = b["n_components"] if components is None else components
+        if d > b["n_components"]:
+            raise HTTPException(400, f"basis {basis_id} has {b['n_components']} components")
+        return {
+            **store.pca_info(basis_id),
+            "as_of": as_of,
+            "components_returned": d,
+            "mean": _vec(b["mean"], "b64"),
+            "components": _vec(b["components"][:d], "b64"),  # row-major (d, dims)
+            "std": _vec(np.sqrt(b["eigenvalues"][:d]), "b64"),
+            "explained_variance_ratio": (b["eigenvalues"][:d] / b["total_variance"]).tolist(),
+        }
+
+    @app.get("/pca/bases")
+    async def pca_bases() -> list[dict]:
+        return store.pca_bases()
+
+    @app.get("/pca/drift")
+    async def pca_drift(basis_id: int | None = None) -> list[dict]:
+        return store.pca_drift(basis_id)
 
     @app.post("/admin/refresh")
     async def refresh() -> dict:

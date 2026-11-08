@@ -1,9 +1,9 @@
 import torch
-import zuko
 
 from .encoders import *
 from .constants import *
 from .relational_attention import RelationBlock
+from .distributions import HiddenCardPosterior
 
 
 class BeliefNetwork(torch.nn.Module):
@@ -12,23 +12,18 @@ class BeliefNetwork(torch.nn.Module):
         n_blocks = 5,
     ):
         super().__init__()
-        self.register_buffer('raw_embedding_cache', torch.empty(0, EXTERNAL_EMBEDDING_DIM, dtype=torch.float32), persistent=False)
         self.object_encoder = ComponentSetEncoder()
         self.event_encoder = ComponentSetEncoder()
         self.relation_encoder = RelationEncoder()
         self.transformer_blocks = torch.nn.ModuleList([
             RelationBlock() for _ in range(n_blocks)
         ])
-        self.hidden_card_flow = ConditionalFlow()
+        self.hidden_card_flow = HiddenCardPosterior()
 
-    def forward(self, game_state: dict, targets=None, n_samples=0):
-        if self.raw_embedding_cache.shape[0] != game_state['emb_lookup_offset']:
-            raise ValueError(f'offset {game_state['emb_lookup_offset']} out of sync with cache size {self.raw_embedding_cache.shape[0]}')
-        self.raw_embedding_cache = torch.cat((self.raw_embedding_cache, game_state['emb_lookup']))
-
+    def forward(self, game_state: dict, emb_cache: torch.Tensor, targets=None, n_samples=0):
         tokens = torch.cat((
-            self.event_encoder(game_state['history'], self.raw_embedding_cache),
-            self.object_encoder(game_state['state'], self.raw_embedding_cache),
+            self.event_encoder(game_state['history'], emb_cache),
+            self.object_encoder(game_state['state'], emb_cache),
         ), dim=0)
         edge_emb, edge_pairs = self.relation_encoder(game_state['edges'])
         batches, mask = self.batch_tokens(tokens, game_state['batch_indices'], game_state['batch_dim'])
@@ -46,28 +41,3 @@ class BeliefNetwork(torch.nn.Module):
         mask = torch.ones(*batch_dim[:-1], dtype=torch.bool)
         mask[batch_indices[order], positions] = False
         return padded, mask
-
-class ConditionalFlow(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.flow = zuko.flows.NSF(
-            features = EXTERNAL_EMBEDDING_PCA_DIM,
-            context=TOKEN_DIM,
-            transforms=N_FLOW_TRANSFORMS,
-            passes=2,
-            hidden_features=(FLOW_DIM,FLOW_DIM)
-        )
-    
-    def forward(self, batches, unknown_cards, targets=None, n_samples=0):
-        samples = None
-        likelihood = None
-        unknown_cards = batches[unknown_cards[:,0], unknown_cards[:,1]]
-        distributions = self.flow(unknown_cards)
-
-        if targets is not None:
-            likelihood = distributions.log_prob(targets)
-
-        if n_samples > 0:
-            samples = distributions.rsample((n_samples,))
-
-        return likelihood, samples

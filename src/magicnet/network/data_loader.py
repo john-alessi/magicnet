@@ -32,11 +32,10 @@ class DataLoader():
         event_components = []
         edges = []
         batch_indices = []
-        unknown_cards = []
+        unknown_cards_flat = []
+        global_token_indices = []
+
         max_L = 0
-        # can probably remove i_batch, just return a list of batch indices
-        # of each *object* (not component) and just keep the global
-        # component index
 
         i = 0
         for i_batch,game in enumerate(games):
@@ -60,10 +59,9 @@ class DataLoader():
 
         i = 0 
         for i_batch,game in enumerate(games):
-            unknown = []
             for gobj in game['state']:
-                if 'name' not in gobj and 'zone' not in gobj:
-                    unknown += [i]
+                if 'name' not in gobj and 'zone' in gobj:
+                    unknown_cards_flat += [i]
                 if 'zone' in gobj:
                     object_components += [('zone', gobj['zone'], 'categorical', i)]
                 if 'components' in gobj:
@@ -85,11 +83,12 @@ class DataLoader():
                             object_components += [(k, v, 'vector', i)]
                 i += 1
                 batch_indices += [i_batch]
-                unknown_cards += [unknown]
 
         for i_batch,game in enumerate(games):
             id_lookup = {}
             for i, token in enumerate(game['history'] + game['state']):
+                if token['type'] == 'global':
+                    global_token_indices += [i]
                 if 'id' in token:
                     id_lookup[token['id']] = i
                 if 'handles' in token:
@@ -104,6 +103,9 @@ class DataLoader():
         vectors = [v for (_,v,kd,_) in object_components + event_components if kd == 'vector']
         emb_lookup, offset = self.get_embedding_lookup(keys, vectors)
 
+        if len(global_token_indices) != len(games):
+            raise ValueError(f'found {len(global_token_indices)} global state tokens in {len(games)} games')
+        
         return {
             'state': self.pack_components(object_components, sum(len(g['state']) for g in games)),
             'history': self.pack_components(event_components, sum(len(g['history']) for g in games)),
@@ -112,10 +114,13 @@ class DataLoader():
                 [(b,i) for b,g in enumerate(games) for i,c in enumerate(g['state']) if 'name' not in c and 'zone' in c],
                 dtype=torch.int32,
             ),
+            'unknown_cards_flat': torch.tensor(unknown_cards_flat),
+            'global_token_indices': torch.tensor(global_token_indices),
             'batch_indices': torch.tensor(batch_indices),
             'batch_dim': (len(set(batch_indices)), max_L, TOKEN_DIM),
             'emb_lookup': emb_lookup,
             'emb_lookup_offset': offset,
+            'pca': self.catalog.pca(EXTERNAL_EMBEDDING_PCA_DIM),
         }
 
     def get_embedding_lookup(self, keys: list[str], strings: list[str], return_diff_only=True):

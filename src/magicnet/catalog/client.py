@@ -6,6 +6,8 @@
     keys = client.keys()                                  # key registry at the pinned version
     kv = client.key_vectors(["life", "ctr_poison"])       # (2, dims) key-description vectors
     sv = client.embed_strings(["Flying", "Kicker {2}{G}"])  # (2, dims) string-value vectors
+    pca = client.pca(32)                                  # PCA basis current at the pinned version
+    z = client.card_targets(["Lightning Bolt"])           # (1, 32) whitened PCA coordinates
 """
 
 from __future__ import annotations
@@ -15,6 +17,8 @@ from dataclasses import dataclass
 
 import httpx
 import numpy as np
+
+from magicnet.catalog.pca import PCABasis
 
 
 @dataclass(frozen=True)
@@ -77,6 +81,7 @@ class CatalogClient:
         self._keys: dict[tuple[str, int], KeyInfo] = {}
         self._registry: dict[str, KeyInfo] | None = None
         self._strings: dict[str, np.ndarray] = {}  # content-addressed: version-independent
+        self._pca: dict[tuple[int | None, int], PCABasis] = {}  # (basis_id or None = pinned, dims)
 
     def _get(self, path: str, **params) -> dict:
         r = self.http.get(path, params=params)
@@ -177,6 +182,36 @@ class CatalogClient:
         if not strings:
             return np.zeros((0, 0), dtype="<f4")
         return np.stack([self._strings[s] for s in strings])
+
+    def pca(self, dims: int = 32, basis_id: int | None = None) -> PCABasis:
+        """The first ``dims`` components of a PCA basis: ``basis_id`` if given,
+        else the basis current at the pinned catalog version (which never
+        changes for that version). Cached in memory."""
+        key = (basis_id, dims)
+        if key not in self._pca:
+            params = {"components": dims, **({"basis_id": basis_id} if basis_id is not None
+                                              else {"as_of": self.version})}
+            r = self.http.get("/pca", params=params)
+            if r.status_code in (400, 404):
+                raise CatalogError(r.json().get("detail", r.text))
+            r.raise_for_status()
+            body = r.json()
+            embed_dims = body["dims"]
+            meta = {k: v for k, v in body.items() if k not in ("mean", "components", "std",
+                                                                "explained_variance_ratio")}
+            self._pca[key] = PCABasis(
+                basis_id=body["basis_id"], dims=dims, mean=_decode(body["mean"]),
+                components=_decode(body["components"]).reshape(dims, embed_dims), std=_decode(body["std"]),
+                explained_variance_ratio=np.asarray(body["explained_variance_ratio"]), meta=meta,
+            )
+        return self._pca[key]
+
+    def card_targets(self, keys: list[str], dims: int = 32, basis_id: int | None = None,
+                     whiten: bool = True) -> np.ndarray:
+        """(len(keys), dims) PCA coordinates (whitened by default) of the card
+        vectors for names/oracle_ids at the pinned version; raises
+        CardNotFound on any miss."""
+        return self.pca(dims, basis_id).project(self.vectors(keys), whiten=whiten)
 
     def names(self, fmt: str = "json") -> dict[str, str] | str:
         r = self.http.get("/names", params={"version": self.version, "format": fmt})

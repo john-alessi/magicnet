@@ -1,6 +1,53 @@
 import torch
 from .constants import *
 from ..schema import ZONES
+from .attention import RelationalAttentionBlock, PooledAttention
+
+class GameStateEncoder(torch.nn.Module):
+    def __init__(
+        self,
+        n_blocks: int,
+    ):
+        super().__init__()
+        self.object_encoder = ComponentSetEncoder()
+        self.event_encoder = ComponentSetEncoder()
+        self.relation_encoder = RelationEncoder()
+        self.transformer_blocks = torch.nn.ModuleList([
+            RelationalAttentionBlock() for _ in range(n_blocks)
+        ])
+
+    def forward(
+        self,
+        game_state: dict,
+        emb_cache: torch.Tensor,
+        hidden_card_tokens: torch.Tensor = None,
+        hidden_card_component_key: torch.Tensor = None,
+    ):
+        tokens = torch.cat((
+            self.event_encoder(game_state['history'], emb_cache),
+            self.object_encoder(
+                game_state['state'],
+                emb_cache,
+                hidden_card_tokens,
+                game_state['unknown_cards_flat'],
+                hidden_card_component_key),
+        ), dim=0)
+        edge_emb, edge_pairs = self.relation_encoder(game_state['edges'])
+        batches, mask = self.batch_tokens(tokens, game_state['batch_indices'], game_state['batch_dim'])
+        for attn in self.transformer_blocks:
+            batches = attn(batches, mask, edge_emb, edge_pairs)
+        return batches
+
+    def batch_tokens(self, tokens, batch_indices, batch_dim):
+        order = torch.argsort(batch_indices, stable=True)
+        counts = torch.bincount(batch_indices, minlength=batch_dim[0])
+        start_indices = torch.cumsum(counts, dim=0) - counts
+        positions = torch.arange(len(batch_indices)) - start_indices[batch_indices[order]]
+        padded = tokens.new_zeros(batch_dim)
+        padded[batch_indices[order], positions] = tokens[order]
+        mask = torch.ones(*batch_dim[:-1], dtype=torch.bool)
+        mask[batch_indices[order], positions] = False
+        return padded, mask
 
 class RelationEncoder(torch.nn.Module):
     def __init__(
@@ -22,7 +69,6 @@ class ComponentSetEncoder(torch.nn.Module):
         self,
     ):
         super().__init__()
-        #self.register_buffer('raw_embedding_cache', torch.empty(0, EXTERNAL_EMBEDDING_DIM, dtype=torch.float32), persistent=False)
         self.component_kind_emb = torch.nn.Embedding(len(COMPONENT_KIND_INDEX), COMPONENT_DIM)
         self.key_encoder = RawEmbeddingEncoder()
         self.vector_encoder = RawEmbeddingEncoder()
@@ -32,13 +78,28 @@ class ComponentSetEncoder(torch.nn.Module):
         self.component_encoder = ObjectComponentEncoder()
         self.attn = PooledAttention(in_dim=COMPONENT_DIM, out_dim=TOKEN_DIM)
 
-    def forward(self, game_state: dict[str, torch.Tensor], emb_cache: torch.Tensor):
+    def forward(
+        self,
+        game_state: dict[str, torch.Tensor],
+        emb_cache: torch.Tensor,
+        hidden_card_tokens: torch.Tensor = None,
+        hidden_card_indices: torch.Tensor = None,
+        hidden_card_component_key: torch.Tensor = None,
+    ):
         components_list = []
         indices_list = []
 
-        # if self.raw_embedding_cache.shape[0] != emb_lookup_offset:
-        #     raise ValueError(f'offset {emb_lookup_offset} out of sync with cache size {self.raw_embedding_cache.shape[0]}')
-        # self.raw_embedding_cache = torch.cat((self.raw_embedding_cache, emb_lookup))
+        if hidden_card_tokens is not None and hidden_card_indices is not None and hidden_card_component_key is not None:
+            components_list.append(
+                torch.cat(
+                    (
+                        hidden_card_component_key.unsqueeze(0).expand(hidden_card_tokens.shape[0]*hidden_card_tokens.shape[1], -1), # key
+                        self.vector_encoder(hidden_card_tokens.flatten(0,1)), # value
+                        self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['vector'])).unsqueeze(0).expand(hidden_card_tokens.shape[0]*hidden_card_tokens.shape[1], -1), # kind
+                    )
+                    , dim=-1
+                )
+            )
 
         if (game_state['vectors'].numel() > 0):
             components_list.append(
@@ -112,53 +173,6 @@ class ComponentSetEncoder(torch.nn.Module):
 
         return objects
 
-class PooledAttention(torch.nn.Module):
-    def __init__(
-        self,
-        in_dim,
-        out_dim,
-        cls_scale = 0.02,
-        d_attn = 64,
-        n_heads = 4,
-    ):
-        super().__init__()
-        self.out_dim = out_dim
-        self.n_heads, self.dh, self.dv = n_heads, d_attn // n_heads, out_dim // n_heads
-        self.q_cls = torch.nn.Parameter(torch.randn(n_heads, self.dh) * cls_scale)
-        self.k = torch.nn.Linear(in_dim, d_attn)
-        self.v = torch.nn.Sequential(
-            torch.nn.Linear(in_dim, out_dim),
-            torch.nn.GELU(),
-            torch.nn.Linear(out_dim, out_dim),
-        )
-        self.out = torch.nn.Linear(out_dim, out_dim)
-
-    def forward(self, components_unordered, indices_unordered, num_tokens):
-        padded, mask = self.group_components(components_unordered, indices_unordered, num_tokens)
-        n_objects, L, _ = padded.shape
-        k = self.k(padded).view(n_objects, L, self.n_heads, self.dh)
-        v = self.v(padded).view(n_objects, L, self.n_heads, self.dv)
-        attn_scores = torch.einsum('hd,nlhd->nhl', self.q_cls, k) * self.dh**-0.5
-        attn_scores = attn_scores.masked_fill(~mask[:, None, :], float('-inf'))
-        attn_weights = torch.softmax(attn_scores, dim=-1).nan_to_num(0.0)
-        game_objects = torch.einsum('nhl,nlhd->nhd', attn_weights, v).reshape(n_objects, self.out_dim)
-        return self.out(game_objects)
-
-
-    def group_components(self, components_unordered, indices_unordered, num_tokens):
-        order = torch.argsort(indices_unordered, stable=True)
-        components = components_unordered[order]
-        indices = indices_unordered[order]
-        counts = torch.bincount(indices, minlength=num_tokens)
-        start_indices = torch.cumsum(counts, 0) - counts
-        positions = torch.arange(len(indices)) - start_indices[indices]
-        padded = components.new_zeros(num_tokens, counts.max(), components.shape[-1])
-        padded[indices, positions] = components
-        mask = torch.zeros(num_tokens, padded.shape[1], dtype=torch.bool)
-        mask[indices, positions] = True
-        return padded, mask
-
-
 class ObjectComponentEncoder(torch.nn.Module):
     def __init__(
         self,
@@ -199,8 +213,8 @@ class RawEmbeddingEncoder(torch.nn.Module):
             torch.nn.GELU(),
         )
 
-    def forward(self, x, embedding_cache):
-        return self.mlp(embedding_cache[x])
+    def forward(self, x, embedding_cache = None):
+        return self.mlp(x) if embedding_cache is None else self.mlp(embedding_cache[x])
 
 class ScalarEncoder(torch.nn.Module):
     def __init__(

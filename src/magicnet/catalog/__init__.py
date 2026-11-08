@@ -4,7 +4,9 @@ See README.md in this package.
 """
 
 from magicnet.catalog.client import CardNotFound, CatalogClient, CatalogError, KeyInfo
+from magicnet.catalog.pca import PCABasis
 from magicnet.catalog.service import CatalogService, create_app
 from magicnet.catalog.store import CatalogStore
 
-__all__ = ["CardNotFound", "CatalogClient", "CatalogError", "CatalogService", "CatalogStore", "KeyInfo", "create_app"]
+__all__ = ["CardNotFound", "CatalogClient", "CatalogError", "CatalogService", "CatalogStore", "KeyInfo", "PCABasis",
+           "create_app"]
