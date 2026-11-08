@@ -12,6 +12,7 @@ class BeliefNetwork(torch.nn.Module):
         n_blocks = 5,
     ):
         super().__init__()
+        self.register_buffer('raw_embedding_cache', torch.empty(0, EXTERNAL_EMBEDDING_DIM, dtype=torch.float32), persistent=False)
         self.object_encoder = ComponentSetEncoder()
         self.event_encoder = ComponentSetEncoder()
         self.relation_encoder = RelationEncoder()
@@ -21,20 +22,19 @@ class BeliefNetwork(torch.nn.Module):
         self.hidden_card_flow = ConditionalFlow()
 
     def forward(self, game_state: dict, targets=None, n_samples=0):
+        if self.raw_embedding_cache.shape[0] != game_state['emb_lookup_offset']:
+            raise ValueError(f'offset {game_state['emb_lookup_offset']} out of sync with cache size {self.raw_embedding_cache.shape[0]}')
+        self.raw_embedding_cache = torch.cat((self.raw_embedding_cache, game_state['emb_lookup']))
+
         tokens = torch.cat((
-            self.event_encoder(game_state['history']),
-            self.object_encoder(game_state['state']),
+            self.event_encoder(game_state['history'], self.raw_embedding_cache),
+            self.object_encoder(game_state['state'], self.raw_embedding_cache),
         ), dim=0)
         edge_emb, edge_pairs = self.relation_encoder(game_state['edges'])
         batches, mask = self.batch_tokens(tokens, game_state['batch_indices'], game_state['batch_dim'])
         for attn in self.transformer_blocks:
             batches = attn(batches, mask, edge_emb, edge_pairs)
         return self.hidden_card_flow(batches, game_state['unknown_cards'], targets, n_samples)
-        distribution = self.flow(unknown_cards)
-        return (
-            distribution.rsample((n_samples,)) if n_samples > 0 else None,
-            -distribution.log_prob(targets) if targets is not None else None,
-        )
 
     def batch_tokens(self, tokens, batch_indices, batch_dim):
         order = torch.argsort(batch_indices, stable=True)
@@ -61,15 +61,13 @@ class ConditionalFlow(torch.nn.Module):
     def forward(self, batches, unknown_cards, targets=None, n_samples=0):
         samples = None
         likelihood = None
-        unknown_cards = batches[unknown_cards[:,0], unknown_cards[:,1], :]
-        distributions = [self.flow(card) for card in unknown_cards]
+        unknown_cards = batches[unknown_cards[:,0], unknown_cards[:,1]]
+        distributions = self.flow(unknown_cards)
 
         if targets is not None:
-            likelihood = torch.tensor([d.log_prob(c) for c,d in zip(targets, distributions)])
+            likelihood = distributions.log_prob(targets)
 
         if n_samples > 0:
-            samples = torch.cat(
-                [d.rsample((n_samples,)) for d in distributions]
-            )
+            samples = distributions.rsample((n_samples,))
 
         return likelihood, samples

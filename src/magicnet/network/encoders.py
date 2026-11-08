@@ -22,6 +22,7 @@ class ComponentSetEncoder(torch.nn.Module):
         self,
     ):
         super().__init__()
+        #self.register_buffer('raw_embedding_cache', torch.empty(0, EXTERNAL_EMBEDDING_DIM, dtype=torch.float32), persistent=False)
         self.component_kind_emb = torch.nn.Embedding(len(COMPONENT_KIND_INDEX), COMPONENT_DIM)
         self.key_encoder = RawEmbeddingEncoder()
         self.vector_encoder = RawEmbeddingEncoder()
@@ -31,17 +32,20 @@ class ComponentSetEncoder(torch.nn.Module):
         self.component_encoder = ObjectComponentEncoder()
         self.attn = PooledAttention(in_dim=COMPONENT_DIM, out_dim=TOKEN_DIM)
 
-    def forward(self, game_state: dict[str, torch.Tensor]):
+    def forward(self, game_state: dict[str, torch.Tensor], emb_cache: torch.Tensor):
         components_list = []
         indices_list = []
-        batches_list = []
+
+        # if self.raw_embedding_cache.shape[0] != emb_lookup_offset:
+        #     raise ValueError(f'offset {emb_lookup_offset} out of sync with cache size {self.raw_embedding_cache.shape[0]}')
+        # self.raw_embedding_cache = torch.cat((self.raw_embedding_cache, emb_lookup))
 
         if (game_state['vectors'].numel() > 0):
             components_list.append(
                 torch.cat(
                     (
-                        self.key_encoder(game_state['vectors'][:,:EXTERNAL_EMBEDDING_DIM]), # key
-                        self.vector_encoder(game_state['vectors'][:,EXTERNAL_EMBEDDING_DIM:2*EXTERNAL_EMBEDDING_DIM]), # value
+                        self.key_encoder(game_state['vectors'][:,0], emb_cache), # key
+                        self.vector_encoder(game_state['vectors'][:,1], emb_cache), # value
                         self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['vector'])).unsqueeze(0).expand(game_state['vectors'].shape[0], -1), # kind
                     )
                     , dim=-1
@@ -53,8 +57,8 @@ class ComponentSetEncoder(torch.nn.Module):
             components_list.append(
                 torch.cat(
                     (
-                        self.key_encoder(game_state['scalars'][:,:EXTERNAL_EMBEDDING_DIM]), # key
-                        self.scalar_encoder(game_state['scalars'][:,EXTERNAL_EMBEDDING_DIM:EXTERNAL_EMBEDDING_DIM+1]), # value
+                        self.key_encoder(game_state['scalars'][:,0], emb_cache), # key
+                        self.scalar_encoder(game_state['scalars'][:,1]), # value
                         self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['scalar'])).unsqueeze(0).expand(game_state['scalars'].shape[0], -1), # kind
                     )
                     , dim=-1
@@ -66,8 +70,8 @@ class ComponentSetEncoder(torch.nn.Module):
             components_list.append(
                 torch.cat(
                     (
-                        self.key_encoder(game_state['colors'][:,:EXTERNAL_EMBEDDING_DIM]), # key
-                        self.color_encoder(game_state['colors'][:,EXTERNAL_EMBEDDING_DIM:EXTERNAL_EMBEDDING_DIM+len(COLOR_WHEEL)]), # value
+                        self.key_encoder(game_state['colors'][:,0], emb_cache), # key
+                        self.color_encoder(game_state['colors'][:,1:1+len(COLOR_WHEEL)]), # value
                         self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['color'])).unsqueeze(0).expand(game_state['colors'].shape[0], -1), # kind
                     )
                     , dim=-1
@@ -79,7 +83,7 @@ class ComponentSetEncoder(torch.nn.Module):
             components_list.append(
                 torch.cat(
                     (
-                        self.key_encoder(game_state['flags'][:,:EXTERNAL_EMBEDDING_DIM]), # key
+                        self.key_encoder(game_state['flags'][:,0], emb_cache), # key
                         torch.zeros(game_state['flags'].shape[0], COMPONENT_DIM), # value
                         self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['flag'])).unsqueeze(0).expand(game_state['flags'].shape[0], -1), # kind
                     )
@@ -92,8 +96,8 @@ class ComponentSetEncoder(torch.nn.Module):
             components_list.append(
                 torch.cat(
                     (
-                        self.key_encoder(game_state['categoricals'][:,:EXTERNAL_EMBEDDING_DIM]), # key
-                        self.categorical_encoder(game_state['categoricals'][:,EXTERNAL_EMBEDDING_DIM:EXTERNAL_EMBEDDING_DIM+2]), # value
+                        self.key_encoder(game_state['categoricals'][:,0], emb_cache), # key
+                        self.categorical_encoder(game_state['categoricals'][:,1:3]), # value
                         self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['categorical'])).unsqueeze(0).expand(game_state['categoricals'].shape[0], -1), # kind
                     )
                     ,dim=-1
@@ -195,8 +199,8 @@ class RawEmbeddingEncoder(torch.nn.Module):
             torch.nn.GELU(),
         )
 
-    def forward(self, x):
-        return self.mlp(x)
+    def forward(self, x, embedding_cache):
+        return self.mlp(embedding_cache[x])
 
 class ScalarEncoder(torch.nn.Module):
     def __init__(
@@ -211,7 +215,7 @@ class ScalarEncoder(torch.nn.Module):
         )
 
     def forward(self, x):
-        return self.mlp(x)
+        return self.mlp(x.unsqueeze(-1).to(torch.float32))
 
 class ColorEncoder(torch.nn.Module):
     def __init__(
@@ -224,7 +228,7 @@ class ColorEncoder(torch.nn.Module):
         )
 
     def forward(self, x):
-        return self.mlp(x)
+        return self.mlp(x.to(torch.float32))
 
 class ManaCostEncoder(torch.nn.Module):
     def __init__(
