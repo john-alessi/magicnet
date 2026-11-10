@@ -1,12 +1,41 @@
 import torch
 import numpy as np
-from .belief_network import BeliefNetwork
+from .constants import *
+from .encoders import GameStateEncoder, DecisionEncoder
+from .distributions import HiddenCardPosterior
+from .output_heads import ValueHead, PolicyHead
 
 class MagicNet(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.belief_network = BeliefNetwork()
+        self.register_buffer('raw_embedding_cache', torch.empty(0, EXTERNAL_EMBEDDING_DIM, dtype=torch.float32), persistent=False)
+        self.hidden_card_component_key = torch.nn.Parameter(torch.randn(COMPONENT_DIM))
+        self.belief_network = GameStateEncoder(n_blocks=BELIEF_NETWORK_LAYERS)
+        self.policy_trunk = GameStateEncoder(n_blocks=POLICY_TRUNK_LAYERS)
+        self.decision_encoder = DecisionEncoder(n_blocks=DECISION_ENCODER_LAYERS)
+        self.hidden_card_posterior = HiddenCardPosterior()
+        self.value_head = ValueHead()
+        self.policy_head = PolicyHead()
 
     def forward(self, game_state: dict[str, torch.Tensor]):
-        hidden_card_samples,_ = self.belief_network(game_state, n_samples=100)
-        return 42
+        if self.raw_embedding_cache.shape[0] != game_state['emb_lookup_offset']:
+            raise ValueError(f'offset {game_state['emb_lookup_offset']} out of sync with cache size {self.raw_embedding_cache.shape[0]}')
+        self.raw_embedding_cache = torch.cat((self.raw_embedding_cache, game_state['emb_lookup']))
+
+        belief_state, _ = self.belief_network(game_state, self.raw_embedding_cache)
+        _, hidden_card_samples = self.hidden_card_posterior(
+            belief_state,
+            game_state['unknown_cards'],
+            game_state['pca'],
+            n_samples=BELIEF_NETWORK_SAMPLES,
+        )
+        policy_state, policy_mask = self.policy_trunk(
+            game_state,
+            self.raw_embedding_cache,
+            hidden_card_samples,
+            self.hidden_card_component_key)
+        decisions, decisions_mask = self.decision_encoder(game_state, self.raw_embedding_cache, policy_state, policy_mask)
+
+        choice_logits = self.policy_head(game_state, policy_state, policy_mask, decisions, decisions_mask)
+        value_logits = self.value_head(policy_state, game_state['global_token_indices'])
+        return value_logits, choice_logits

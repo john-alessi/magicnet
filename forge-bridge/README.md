@@ -31,6 +31,8 @@ That same seam is how the policy will eventually be plugged in.
 | `Harness.java` | Forge bootstrap, deck loading, game loop |
 | `HistoryHub.java` | Game history, once per game: Forge events -> events with causes and steps |
 | `GameHistory.java` | One viewer's history tokens, tracking handles, phantoms (schema 13) |
+| `PlayFilter.java` | Drops unplayable candidates from the priority list (`-Dmagicnet.filter`, schema 19) |
+| `Announce.java` | Routes and records `announceRequirements` (X) as decision kind `announce` (schema 20) |
 
 The overrides are generated rather than hand-written so they stay correct across
 Forge upgrades: re-run `build.sh` and the compiler reports anything that moved.
@@ -64,6 +66,34 @@ Outputs `out/decision_summary.csv` and optionally `out/decision_trace.csv`.
 Set `-Dmagicnet.enumerate=false` to skip candidate-pool reconstruction when
 measuring clean throughput.
 
+### Bulk imitation dumps (`scripts/generate_dumps.py`)
+
+Observe-mode (Forge AI vs Forge AI) dumps at scale, choices/combat/payment
+routing and labels on. Each game samples both decks by metagame share
+(`--shares` CSV `archetype,share[,deck]`; `fixtures/premodern/` holds Forge's
+"Current Premodern Metagame" decks and a **placeholder** shares file) and
+gets its own seed; games run in shards of `--games-per-shard` per JVM
+(`Harness --game-list FILE --results FILE --first-game N --exit-on-timeout`;
+`Harness --check-decks DIR --format NAME` vets the decks first), written as
+`OUT/shard_XXXXX.jsonl.gz`, validated with `scripts/validate_dump.py`, one
+`OUT/manifest.jsonl` line per game, per-JVM peak RSS/CPU/startup in
+`OUT/stats.jsonl`. Re-running the same command resumes. One generator per
+`OUT` (lock file); `--workers` is capped to half of MemAvailable at
+`heap + 768 MB` per JVM; JVMs exit on heap OOM, are first in line for the
+kernel OOM killer and die with the generator (`setpriv --pdeathsig`). Read
+with `magicnet.dump.load_many("OUT")`.
+
+```bash
+uv run scripts/generate_dumps.py --out data/dumps/premodern_v1 --games 20000 \
+    --shares SHARES.csv --workers 5 --heap 1536m
+```
+
+Measured (Premodern placeholder shares, 175 games): ~2.2 s and ~480
+records per game, 0.4 MB gzip per game, ~5 s JVM startup per shard, peak RSS
+1.3-1.9 GB per JVM, ~2.5 CPU cores per JVM plus a validator process after
+each shard: throughput is CPU-bound (~1,000-1,150 games/hour per worker
+including validation).
+
 ## Progressive takeover
 
 `GeneratedController` delegates all 122 callbacks to Forge's heuristics, so a
@@ -76,11 +106,13 @@ everything not overridden keeps using the bot. This doubles as an ablation axis.
 ### Scry and surveil (`-Dmagicnet.choices=true`)
 
 `arrangeForScry`/`arrangeForSurveil` are decomposed like combat into pick-one
-decisions: one per looked-at card (kind `scry`: "put X on top" / "put X on the
-bottom"; kind `surveil`: "put X on top" / "put X into graveyard"), then, for an
-ordered pile holding 2+ cards, repeated `order_top` / `order_bottom` decisions
-("place X next from the top/bottom", nearest that end first; the last card is
-not asked). Options carry a `refers_to` edge and `oracle_id`. Before the first
+decisions: one per looked-at card (kind `scry`: option tokens `scry_top` /
+`scry_bottom`; kind `surveil`: `surveil_top` / `surveil_graveyard`; the prompt
+has an `obj` edge to the card and `selected` edges to the cards already
+placed), then, for an ordered pile holding 2+ cards, repeated `order_top` /
+`order_bottom` decisions whose candidates are references to the remaining
+cards' tokens (the one placed next from that end; nearest that end first; the
+last card is not asked). Before the first
 decision the cards are learned as exact-position `LibraryKnowledge` for the
 decider only, so they appear as `self_library` `library_card` tokens with
 `depth_from_top`; earlier picks in the sequence show as `arranged_pile` /
@@ -94,19 +126,24 @@ records match what the routed path would show and play is unchanged.
 ### Unless costs and simultaneous triggers (`-Dmagicnet.choices=true`)
 
 - `pay_unless` (`payCostToPreventEffect`: shock lands, Spell Pierce, ward, No
-  More Lies): 0 = "don't pay (Source)", 1 = "pay {2} (Source)"; both reference
-  the source card. Asked only when `ComputerUtilCost.canPayCost` says the cost
+  More Lies): 0 = option `decline`, 1 = option `pay` with a `cost` component
+  ("{2}"); the prompt points at the resolving ability (`stack_object`) and its
+  source card (`source_is`). Asked only when `ComputerUtilCost.canPayCost` says the cost
   is payable. Forge's AI pays inside this callback, so a routed "pay" pays too:
   per-part `canPay` check, then `CostPayment.payCost` with the AI's cost
   decisions and `refundPayment` on failure (life cannot be refunded; failures
   are reported as a `WARN` line).
-- `order_triggers` (`orderAndPlaySimultaneousSa`, 2+ entries): repeated "put X
-  trigger on the stack next: <text>" picks, first pick bottommost (resolves
-  last); options reference the source card.
+- `order_triggers` (`orderAndPlaySimultaneousSa`, 2+ entries): repeated
+  `order_next` option tokens (the entry's `ability` text, `source_is` its
+  source card) picking the entry put on the stack next, first pick bottommost
+  (resolves last); the prompt's `selected_count` is the number already placed
+  (they are not tokens yet).
 - `choose_target`: a trigger whose ability chain targets is set up with
   `SpellAbility.setupTargets`, so `chooseTargetsFor` asks one slot at a time:
-  "target X with Source trigger" per legal candidate (refs the candidate), plus
-  "choose no more targets" once the minimum is met; a lone forced candidate is
+  a reference to each legal candidate's token, plus a `choose_nothing` option
+  ("no more targets") once the minimum is met; the prompt carries `min`/`max`,
+  `optional`, the trigger's `ability` text (it has no token yet) and
+  `selected` edges to targets already chosen. A lone forced candidate is
   not asked. Divided, random and stack (spell/ability) targets stay with the AI.
   Stack placement remains `ComputerUtil.playStack`, as for the AI.
 - `playTrigger` (static, stackless triggers): an optional one is a
@@ -119,6 +156,386 @@ before the AI binds it, labelled from what it bound). Multi-slot targets are
 routed when deciding but not recorded when observing. Spell targets are not
 routed (the AI picks them on the engine cast path too). `fixtures/trig` is a
 flicker/ETB-target/cast-trigger mirror for exercising this.
+
+### Announcements: X (`-Dmagicnet.choices=true`, schema 20)
+
+`announceRequirements` (the engine's "announce X" while casting,
+`PlaySpellAbility.announceValuesLikeX`; also other `Announce$` variables
+such as March of Otherworldly Light's "Exiled") is decision kind
+`announce`, implemented in `Announce.java`. Before schema 20 it returned
+Forge's AI value, which is null for most APIs, so the engine path fell back
+to the minimum: X was always 0.
+
+- Prompt: `announce` ("X"), `min`, `max` (the largest value offered),
+  `stack_object`/`source_is` edges to the spell (its card token in zone
+  `stack`, `casting: true`; an activated ability's prompt has `source_is`
+  and `ability` text). Options: `number` tokens with `value`, ascending.
+- Range: `[min, max]` from `AbilityUtils.getAnnouncementBounds`; more than
+  20 values above `min` offers `min..min+20` plus the largest legal value
+  (counted "range capped").
+- Mask (read-only; undecidable means kept): an X whose mana cost cannot be
+  paid (`ManaPayment.affordable` with the X shards as generic; affordability
+  is monotone in X, so the largest affordable X is searched for; a
+  generic-only `ReduceCost` reduction is assumed in full, other reductions,
+  coloured X and X in a non-mana cost part are undecidable); an X that
+  leaves the spell's own targeting short of its minimum
+  (`TargetRestrictions.getNumCandidates` with X set on the ability and
+  restored). A non-X variable is masked when the additional costs it feeds
+  cannot be paid (`CostAdjustment.adjust` + `CostPayment.canPayAdditionalCosts`
+  with the value set and restored; decide mode only). One legal value is
+  taken without asking. If every value is masked, all are offered.
+- Observe mode: Forge's AI never announces (its cast path takes X from its
+  own evaluation, fixed while paying), so the record is built when the AI's
+  cast moves the spell to the stack (state: the spell `casting`, its
+  `x_paid` removed), labelled with the X the AI's payment uses (the
+  ability's X SVar); after the cast the label is checked against the X
+  actually paid ("observe: label equals the X the AI paid"; mismatches
+  print as "LABEL MISMATCH"). Only X is recorded in observe mode. Every
+  other record of a seeded AI run is unchanged (pio_41, seed 42: 4 March
+  records, X = 0 as paid; the other 1,195/1,413 records identical).
+- `chooseNumber` ("choose a number", `AnnounceType$ ChooseNumber`) was
+  already routed as `choose_number`.
+
+Counters print as `=== announce routing ===`. Decide mode, random policy,
+pio_41, 3 games, payment on: March of Otherworldly Light refusals 1,582 ->
+0 (with the schema-20 filter additions below).
+
+### Mana payment (`-Dmagicnet.payment=true`, schemas 17-18)
+
+Off by default (it adds decisions). Implemented in `ManaPayment.java`.
+
+- `pay_mana`: one pick-one decision per payment step until the cost is paid.
+  Option tokens: `activate_mana` (a mana ability of a battlefield permanent
+  the payer controls, one option per colour it can be told to make:
+  `ability` text, `mana_color` W/U/B/R/G/C, `mana_amount`, `source_is` edge),
+  `use_pool` (floating mana that can pay this spell: plain units of one colour,
+  restriction and snow collapse into one option with `mana_amount` = units;
+  mana with a rider -- Cavern of Souls' "can't be countered", counters,
+  keywords, spend triggers -- is its own option per source with `rider` = the
+  producing ability's text and a `source_is` edge; `restricted`, `snow`
+  flags), `pay_life` (`cost` "2 life", a Phyrexian shard). The prompt carries
+  `remaining_cost` ("{1}{B/P}{B/P}"), `remaining_generic`, `remaining_W..C`
+  (unpaid shards a colour can pay; hybrids count under each colour),
+  `spent_W..C`/`spent_snow` (mana already paid into this cost),
+  `life_paid`, `selected` edges to sources already tapped for it
+  (`selected_count` includes sacrificed ones, which have no token), and the
+  spell's `ability` text (a spell being cast has no token yet).
+- `pay_convoke` / `pay_delve`: Forge asks for Convoke/Improvise taps and Delve
+  exiles up front (`CostAdjustment.adjust`, before any mana), through
+  `chooseCardsForConvokeOrImprovise` / `chooseCardsToDelve`; routed there as
+  sequential decisions: `convoke`/`improvise` options (`pays` "{G}"/"{1}",
+  `source_is` the creature/artifact) or references to graveyard cards, plus
+  `choose_nothing` (stop) when the rest is payable from mana sources
+  (`optional`). Waterbend: see below (schema 18).
+- Mask: a candidate is offered only if the rest of the cost stays payable
+  (Forge's own `ManaCostBeingPaid.payMana` on a copy, then
+  `MaskCost.extendable` over the remaining sources, every Phyrexian
+  mana-or-life and `{2/W}` colour-or-two-generic split tried). A single legal
+  candidate is taken without asking and not recorded (like a forced target).
+- Decide mode pays the way `PlayerControllerHuman` does: `payManaCost` goes
+  through `PlaySpellAbility.payManaCost` (cost adjustment, Convoke/Delve, X),
+  which calls back `applyManaToCost`; a step is the mana ability through
+  `PlaySpellAbility.playSpellAbility` with its colour set by
+  `setManaExpressChoice`, then `ManaPool.payManaFromAbility`
+  (`InputPayMana.activateManaAbility`); pool mana as
+  `ManaPool.tryPayCostWithColor` does for one chosen unit; Phyrexian life as
+  `InputPayManaOfCostPayment` (shard now, life once paid). A `false` return
+  lets `PlaySpellAbility` roll the cast back.
+- Observe mode leaves Forge's AI paying exactly as before and reconstructs
+  the steps from `SpellAbility.getPayingMana()` (its payment order); each
+  step's state is captured when the AI taps that step's source, with that one
+  card shown untapped. Phyrexian life is appended last (its place in the AI's
+  order is not recoverable). Payments made inside another open observe-mode
+  record (an AI-paid `pay_unless`, a confirmed trigger's cost) are not
+  recorded, to keep the history deltas in order. Existing records are
+  unchanged: with the flag on, every non-payment record of a seeded AI run is
+  identical to the flag-off run.
+- `-Dmagicnet.payment.audit=true` compares the first-step mask with
+  `ComputerUtilMana.canPayManaCost` (about 1 ms per payment);
+  `-Dmagicnet.payment.fault=true` corrupts observe-mode labels (to show the
+  label replay check fails). Counters print as "mana payment routing".
+- Schema 18 additions: mana abilities with a mana cost (filters, Signets,
+  Arcum's Astrolabe) are `activate_mana` options with a `cost` component;
+  taking one pays that cost as a nested `pay_mana` sequence (prompt
+  `ability` = the filter's text) masked so the outer payment stays payable.
+  Mana abilities usable from hand/graveyard/exile/command (Spirit Guides) are
+  options with a `source_is` edge to that card. "Any combination" abilities
+  (`Combo`, amount 2+: Sage of the Maze, Graven Cairns) are ONE option without
+  `mana_color`; their colours are then `pay_mana_combo` decisions, one per
+  unit (`choose_color` options with `mana_color`, prompt `remaining_cost` and
+  an `obj` edge to the source; a colour is offered only if some completion
+  keeps the payment payable). `specifyManaCombo` outside a payment
+  (Manamorphose, a combo ability activated at priority) is routed the same
+  way, unmasked. Mask: a fixed multi-colour bundle (`{B}{R}`) is its real
+  colours, `{S}` needs a snow source, a mana ability without `{T}` counts as
+  usable as often as its cost allows (sacrifice-another, life, counters on the
+  source; cap 4), and an ability's own cost cannot be paid by its own output
+  or another filter's (chains of filters are not modelled: too strict there).
+  Observe mode records combination colours from the AI's paying mana when the
+  whole output was spent on the cost.
+- Waterbend (`chooseCardsForConvokeOrImprovise` with a maximum) is a
+  `pay_convoke` sequence of `waterbend` options (`pays` "{1}", at most the
+  maximum).
+- Not offered: X costs, `{2/W}` rider effects beyond the split already
+  modelled, and colour choices of non-combo "any colour" abilities beyond
+  one option per colour.
+
+### Non-mana costs (`-Dmagicnet.payment=true`, schema 18)
+
+The engine pays every cost through `CostPayment.payCost(controller.getCostDecisionMaker(...))`.
+`PlayerControllerHuman` returns a `HumanCostDecision`, whose visits ask the
+player (`InputSelectCardsFromList`); Forge's AI returns `AiCostDecision`. A
+routed payer now gets `CostChoices.Routed` (an `AiCostDecision`), whose
+visits for the card-choosing parts ask one card per decision, from the list
+`HumanCostDecision` builds:
+
+- `pay_sacrifice`, `pay_discard`, `pay_exile` (own zones or any zone; not
+  library-top or "same graveyard"), `pay_tap` (N creatures, or crew-style
+  total power: prompt `remaining_power`), `pay_untap`, `pay_return`,
+  `pay_reveal`. Candidates are references to the cards' tokens (fallback
+  `choose_object`); the prompt has the cost part as `cost` ("Sacrifice a
+  creature", "Exile two cards from your graveyard"), `min`/`max` = cards still
+  to choose, `selected` edges to cards already chosen, and the ability's
+  `stack_object`/`source_is` edges (or `ability` text). Exactly as many
+  candidates as needed are taken without asking. Branches not mirrored
+  (different names, total mana value, shared type, random, whole hand,
+  from source) stay with the AI and are counted as `cost: silent: ...`.
+  This covers spells' additional costs, activated abilities and mana
+  abilities' costs (Springleaf Drum's tap, Ashnod's Altar's sacrifice) on the
+  routed path, and the cost of a routed `pay_unless`.
+- Emerge / Offering: `CostAdjustment` asks `choosePermanentsToSacrifice`
+  inside the payment; routed as `pay_sacrifice` with `cost` "Emerge" /
+  "Offering" (required: the cast fails without it), creatures offered only if
+  the reduced cost stays payable without them (all offered if none is).
+- `choose_optional_cost`: `PlaySpellAbility.chooseOptionalAdditionalCosts`
+  calls `chooseOptionalCosts` with every optional cost (kicker, buyback,
+  entwine, offering, ...; Forge's AI answers from its own evaluation), and
+  `GameActionUtil.addExtraKeywordCost` calls `chooseNumberForKeywordCost`
+  (casualty, conspire, offspring; multikicker/replicate/squad with a
+  number). Options: `choose_nothing` (stop), then `optional_cost` (`cost`,
+  `ability` = Forge's label such as "Kicker – {R}", `value` = times for the
+  numbered keywords); one cost per decision, offered only while the total
+  stays affordable (`ComputerUtilCost.canPayCost` on a `Cost` copy;
+  retrace/jumpstart only from the graveyard).
+- `choose_additional_cost`: an `AlternateAdditionalCost` spell (Lightning
+  Axe: discard a card or pay {5}) asks `getAbilityToPlay`, where Forge's AI
+  takes the first; options are `optional_cost` with each variant's full cost.
+- Observe mode: Forge's AI builds its own `AiCostDecision` inside
+  `ComputerUtil.handlePlayingSpellAbility`, so when a cast's cost has a
+  card-choosing part `CostChoices.observeCast` replays
+  `PlayerControllerAi.playChosenSpellAbility` line for line with an observing
+  decision maker that takes the AI's decision and records it (state: the
+  spell on the stack, before any part is paid -- the AI decides every part
+  before paying, the routed path pays mana first). The AI's optional costs
+  are part of its chosen ability variant: they are recorded as the
+  `choose_optional_cost` sequence before the cast, and the variant's
+  `ability` record now labels its pool spell (`chosen_match` "signature").
+  Keyword-cost answers and Emerge/Offering sacrifices are recorded where the
+  AI answers them. Every pre-existing record of a seeded AI run is unchanged
+  with the flag on. `-Dmagicnet.payment.fault=true` corrupts these labels too.
+- Engine path guard: `PlaySpellAbility.playSpellAbility` checks `canPlay` for
+  spells only, and the priority pool is unfiltered, so an external policy
+  could "activate" a tapped land's mana ability (no tap, mana added: an
+  unbounded mana loop seen with a random policy). The engine path now refuses
+  a non-spell ability that cannot be activated (rolled back; counted as
+  "engine path: unactivatable abilities refused"). Decide mode only. Schema
+  19: the priority candidate filter (below) removes them before they are
+  offered, so this guard no longer fires.
+- Still silent (AI): `chooseNumberForCostReduction` ("up to" cost
+  reductions), collect evidence, forage, removing counters from other
+  permanents, put-card-in-library costs, the cost order (`orderCosts`; the
+  human is asked only with a full-control setting), and costs paid during
+  resolution through `PlayerController` callbacks other than `pay_unless`.
+
+`fixtures/costs` is a sacrifice/discard/exile/crew/Signet/filter/Spirit
+Guide/combination/kicker/Offering/Emerge/snow/waterbend mirror for
+exercising both sections.
+
+`fixtures/pay` is a Phyrexian/hybrid/Convoke/Delve/Improvise/Cavern pile for
+exercising this.
+
+## Decision candidates and the prompt (schema 16)
+
+Every record is `{schema, game, decision, viewer, kind, turn, phase, hist_total,
+hist_from, hist_new, state, prompt, actions[, hidden_truth], chosen,
+chosen_match}`. The policy still returns one index into `actions` (protocol
+unchanged), but `actions` is now an ordered list of two candidate families:
+
+- **References** `{"ref": "<handle or id>"}` when the choice IS a game object or
+  player the viewer already has a token for: targets, defenders
+  (`declare_attacker`), attackers to block (`declare_blocker`), cards being
+  ordered (`order_top`/`order_bottom`), `choose_entity`/`choose_companion`/
+  `choose_card_zone_change` picks. Resolved through the same id/handle table as
+  edges (`Serializer.Resolver`; a tracking handle `h<N>` when the token has one,
+  else its id), never to an individual card the viewer cannot see. A pick from
+  the viewer's own library at an unknown position references that name's
+  aggregate, which carries the id `n:<name>`: identical copies are ONE candidate,
+  and the first copy behind it is the one fetched when deciding (observe-mode
+  labels map the AI's card to the candidate its token resolves to). An object
+  with no visible token falls back to an option token (`choose_object`,
+  `attack`, `block`), counted in the run summary ("object options with no
+  token").
+- **Option tokens** for choices without a token:
+  `{"type":"action","id":"a<i>","edges":[...],"components":{"verb":...}}`,
+  `i` = the candidate's index, `verb` from `Schema.ACTION_VERBS` (vocab
+  `action_verb`: `pass, cast, activate, play_land, attack, no_attack, block,
+  no_block, choose_nothing, choose_object, confirm, decline, pay, mode, number,
+  scry_top, scry_bottom, surveil_top, surveil_graveyard, order_next`; schema 17
+  adds `activate_mana, use_pool, pay_life, convoke, improvise`; schema 18
+  `optional_cost, choose_color, waterbend`). Priority
+  options carry `ability` (Forge's text normalized: no ids, bracketed context
+  or player names, the host's own name as "this creature/permanent/spell"),
+  `target_candidates` (`getAllCandidates(sa, false)`), `mana_ability` (only
+  when true) and a `source_is` edge to the host; `pass` is always last on
+  `ability` decisions and absent elsewhere. `mode`/`confirm`/`order_next`
+  carry `ability`, `number` a `value`, `pay` a `cost`.
+
+`prompt` is one `{"type":"decision","id":"q",...}` token: `kind` (vocab
+`decision_kind`, = the record's `kind`), `prompt_text` (Forge's title/prompt,
+normalized; absent when none), `min`/`max`, `optional` (a `choose_nothing` is
+offered), `selected_count`, `ability` (the asking ability's text when its
+`stack_object` edge does not resolve), and edges `stack_object`/`source_is`
+(asking ability and card), `obj` (scry/surveil card, confirm_action card),
+`attacks`/`blocks` (the creature a combat step is about) and `selected`
+(tokens chosen earlier in the same decomposed decision: attackers/blockers
+declared so far, targets already chosen, cards already placed). In observe
+mode the combat prompts are rendered when the record is written, so
+`selected` reflects the AI's earlier answers. Example (pio_41, decision 607):
+
+    "prompt": {"type":"decision","id":"q","edges":[{"rel":"stack_object","to":"h80"},
+               {"rel":"source_is","to":"h55"}],"components":{"kind":"choose_card_zone_change",
+               "prompt_text":"Select a card from your library","optional":true}},
+    "actions": [{"type":"action","id":"a0","components":{"verb":"choose_nothing"}},
+                {"ref":"n:Island"}, {"ref":"n:Plains"}]
+
+Python: `Decision.prompt`, `Decision.actions`; `magicnet.dump.decision_tokens(d)`
+is `d.tokens + [prompt] + option tokens` (candidate order), and
+`resolve_candidates(d)` maps each candidate to its index in that list (refs
+point into `d.tokens`), i.e. the pointer head's candidate set;
+`resolve_edges`/`strip_ids` work on that list unchanged. `pass_index` finds
+the `pass` option.
+
+## Priority candidate filter (`-Dmagicnet.filter`, schema 19)
+
+`ComputerUtilAbility.getSpellAbilities` keeps every ability that is merely
+*possible*: an activated ability of a tapped permanent, a sorcery-speed
+ability at instant speed, a spell the player cannot pay for, a spell with no
+legal target. A random policy picks them constantly and the engine refuses
+them (57,146 refusals in 3 random-policy games of pio_41, 69,852 on
+`fixtures/costs`). `PlayFilter` removes them from the `ability` candidate list
+before the record is built, with read-only checks:
+
+1. **Activation** (abilities and land plays): `SpellAbility.canPlay()`, the
+   check the engine path refuses on. Its activating player was already set by
+   `Card.getAllPossibleAbilities` while the pool was built, so nothing is set
+   here (an ability whose activator is not the player is kept). Spells need no
+   such check: the pool only holds spells whose `canPlay(true)` held.
+2. **Targets** (CR 601.2c): the top-level targeting needs a target and
+   `TargetRestrictions.getNumCandidates` finds none. Kept when the targets or
+   the cost mention X (validity would be read with X = 0).
+3. **Mana**: the printed mana cost (X = 0, no optional costs) through the
+   payment mask on an empty prefix (`ManaPayment.affordable`, built on
+   `MaskCost.extendable`). Kept whenever the cost could be reduced at payment
+   time -- an applicable `ReduceCost`/`SetCost` static (Forge's own
+   `CostAdjustment.checkRequirement`), Delve, Convoke, Improvise, Assist,
+   Emerge, Offering, Waterbend, power-up, pip reductions -- because modelling
+   the reduction means running `CostAdjustment.adjust`, which asks the
+   controller. Cost increases are ignored (can only keep more).
+
+Schema 20 additions: an X spell whose X-dependent targeting has no legal
+target for any X in 0..20 (nor X = 99) is removed ("no legal targets at any
+X"); a spell whose only possible reductions are generic `ReduceCost` statics
+is removed when the coloured part of its cost alone cannot be paid.
+
+Anything that throws is kept: the filter may leave an unplayable candidate
+in, never take a playable one out. The run summary prints what it removed and
+kept (`=== priority candidate filter ===`).
+
+**Default: on whenever an external action source decides, off for AI-only
+runs** (`-Dmagicnet.filter=true|false` overrides). Measured:
+
+- Observe mode, filter on, 13 fixtures x 3 games (seed 42, payment on):
+  Forge's AI played a removed candidate **0** times in 1,279 plays (the
+  harness counts it: "HIDDEN: AI played a removed candidate"); every
+  `chosen_match` is unchanged (14,183 pass, 1,228 identity, 51 signature, 0
+  absent), seeded games, history, state and prompts are identical to a
+  filter-off run, and the mean `ability` candidate count drops from 9.35 to
+  5.48 (including pass). Observe-mode dumps stay unfiltered by default so a
+  regenerated fixture keeps its candidate indices; pass
+  `-Dmagicnet.filter=true` to label against the candidate list a policy sees.
+- Decide mode, random socket policy, 3 games, payment on: pio_41 refusals
+  57,146 -> 1,664 (unactivatable abilities 43,263 -> 0; refused casts 13,883
+  -> 1,664, of which 1,582 are March of Otherworldly Light: its X is not
+  routed to the policy, Forge's AI declines the announcement, X defaults to 0
+  and no target has mana value 0), 12 -> 208 games/hour; `fixtures/costs`
+  69,852 -> 146 (Emerge/Offering/Waterbend casts the random policy then pays
+  wrongly), 11 -> 276 games/hour; 0 agent errors. Schema 20 (X routed as
+  `announce`, filter additions; `-Dmagicnet.actions=random`, seed 42): pio_41
+  refused casts 9 (all Change the Equation), March 0; `fixtures/costs` 159
+  (Ruthless Waterbender 128, Patron of the Akki 20, It of the Horrid Swarm
+  11; no X spells).
+
+## The stack (schema 19)
+
+Spells and abilities on the stack are two token types, because a spell **is a
+card** (characteristics, P/T, cast-time choices) and an ability is not:
+
+- A **spell** -- cast, copied, or still being cast -- is its card's
+  `game_object` in zone `stack`, built like a card in any other zone: id
+  `c<N>`, `name`/`oracle_id`/`state` (opponent spells are public; a face-down
+  spell (morph, disguise; `face_down: true`) is nameless to a viewer who does
+  not control it and is a hidden region with a `hidden_truth` label, exactly
+  like a face-down permanent),
+  `types`, `colors`, `power`/`toughness`/`base_*` for creature spells,
+  `gained`/`lost`, and the cast-time choices `x_paid`, `kicked`, `modes`. Plus
+  `side` (its controller: the stack is one shared zone, so the zone does not
+  say), `stack_depth`, `copy: true` for a copy of a spell, ordered target
+  edges `target_0..3`/`target_more` (the slots history and options use), and
+  `owner_is` when its owner is not its controller (as on the battlefield). No
+  `source_is`: its source is itself.
+- An **ability** (activated or triggered; mana abilities never use the stack)
+  is a `stack_item` (id `s<N>`): `side` (its controller), `stack_depth`,
+  `is_trigger`, `ability` (rules text normalized like option tokens),
+  `modes`, `source`/`source_oracle_id` (absent when the source is face down
+  and the viewer does not control it), a `source_is` edge and target edges.
+- `stack_depth` is 0 for the top (resolves next). A spell **being cast** --
+  Forge moves the card to the Stack zone at announcement, but its stack
+  instance only exists once it is paid for -- carries `casting: true` and
+  the depth it will have once cast: it is the top (0) and every stack
+  instance is one deeper while it is being cast. So prompts and options during
+  its modes/X/targets/costs/payment can point at it, and depths stay
+  non-negative. A card left in the Stack zone by a refused cast on Forge's AI
+  path (`failed_unrolled`, not rewound) reads the same way.
+- `targeting`/`targeting_spell` are no longer emitted (kept in the relation
+  vocabulary so indices do not shift). A target that is a spell is its card
+  token, an ability its `stack_item`.
+
+```
+{"type":"game_object","zone":"stack","id":"c63","name":"No More Lies","oracle_id":"...",
+ "handles":["h21"],"edges":[{"rel":"target_0","to":"c141"}],
+ "components":{"state":"Original","side":"opp","stack_depth":0,"types":"Instant",
+               "colors":["white","blue"]}}
+{"type":"stack_item","zone":"stack","id":"s148","source":"Map Token","handles":["h85"],
+ "edges":[{"rel":"source_is","to":"h84"},{"rel":"target_0","to":"c726"}],
+ "components":{"stack_depth":0,"side":"self","ability":"{1}, {T}, Sacrifice this token: ..."}}
+```
+
+**Every edge resolves** (schema 19). A state edge to an object with no token
+of its own -- an ability's source that left play (the sacrificed Map token
+above), a target that ceased to exist -- is rewritten to that object's tracking
+handle when the viewer's history has one (`h84`, on the Map token's phantom),
+and otherwise omitted (the viewer cannot identify it; e.g. an attacker still
+`attacking` a planeswalker that died mid-combat). `StateExtractor.settleEdges`
+does this and the run summary counts it (`=== state edges without a direct
+token ===`). Prompt and option edges were already resolved before writing.
+`scripts/validate_dump.py` fails on any history, state, prompt or option edge
+that does not resolve within its record.
+
+Prompts asked while a spell is being cast (`pay_mana`, `pay_*` costs,
+`choose_target`, modes) point `stack_object` and `source_is` at the spell's
+card token. An activated ability has no token until it is on the stack, so
+its payment prompts point `source_is` at the source and carry the `ability`
+text instead of a `stack_object` edge.
 
 ## History (schemas 13-14)
 
@@ -227,7 +644,8 @@ follow, and every state lists each handle the history has referenced in the
 top-level `handles` of exactly one token:
 
 1. the object's own token if the viewer can see it (battlefield, graveyard,
-   exile -- face-down too --, the stack item of a spell, its own hand, an
+   exile -- face-down too --, a spell's card token on the stack (schema 19),
+   an ability's `stack_item`, its own hand, an
    opponent hand card `known_by_reveal`, a library card at a known position);
 2. the aggregate of the hidden zone it is known to be in: an opponent's
    unseen hand cards are now one `library_card` `count` token in `opp_hand`
@@ -346,14 +764,14 @@ rejects a live request carrying `hidden_truth`
 (`HistoryReassembler.absorb(..., where="live request")`, which the agent
 uses), and `scripts/validate_dump.py` checks that every region has exactly
 one label with the right total, labels only name regions of their record,
-no label sits inside `hist_new`/`state`/`actions`, and no live request
+no label sits inside `hist_new`/`state`/`prompt`/`actions`, and no live request
 (`chosen_match` "pending") carries labels. Turning labels on changes nothing
 else: seeded games and every other byte of the dump are identical.
 
 ## Gotchas
 
-- Card tokens carry `oracle_id` (and `source_oracle_id` on stack items and
-  actions) whenever the card's name is emitted, from
+- Card tokens carry `oracle_id` (and `source_oracle_id` on ability stack items and
+  delayed triggers) whenever the card's name is emitted, from
   a name table built by `uv run scripts/build_oracle_map.py` and loaded from
   `-Dmagicnet.oracle=PATH` (default `../data/processed/oracle_ids.tsv`). Without
   the table the harness warns and omits the field; rebuild it after refreshing
@@ -370,7 +788,11 @@ else: seeded games and every other byte of the dump are identical.
   the former literal `HIDDEN` / `<hidden>`. History tokens carry no card names
   at all since schema 13. Per the rules an unseen card has no
   name, and absence means unknown as for every other key. The controller of a
-  face-down permanent still sees its name. Test with `magicnet.dump.is_hidden`.
+  face-down permanent (or face-down spell) sees its real name and
+  `oracle_id` (schema 20; before it Forge's nameless face-down state was
+  emitted as `name: ""`); face-down exile is named only where Forge lets the
+  viewer look. No token carries an empty-string name (`validate_dump.py`
+  rejects any empty top-level string). Test with `magicnet.dump.is_hidden`.
   That check reads `PlayerView` opponent lists, which only `HostedMatch`
   fills in, so `Harness` calls `updateOpponentsForView()` itself.
 - Forge has no reveal event: reveals arrive only as `PlayerController.reveal`
@@ -423,8 +845,9 @@ else: seeded games and every other byte of the dump are identical.
   `Schema.isTopLevel` is the single rule (`tests/test_schema.py` checks it
   against keys.json); read components with `magicnet.dump.comp`. Flags are
   written only when true, except an attacker's `blocked`. History `ability` text has Forge's
-  run-unstable `Name (id)` object ids removed. Action options and the record
-  envelope are unchanged (flat).
+  run-unstable `Name (id)` object ids removed. The record envelope is flat;
+  since schema 16 decision options are tokens too (see "Decision candidates
+  and the prompt").
 - Schema 10 abilities: printed abilities reach the model through `oracle_id`,
   so a battlefield `game_object` carries only the engine-resolved difference
   (`AbilityText`): `gained` (abilities it has that are not printed on it --
@@ -462,7 +885,9 @@ The recorded count comes from `ComputerUtilAbility`, which lives in `forge.ai`,
 not `forge.game` — it is the bot's private helper rather than an engine service.
 We deliberately do not call `setActivatingPlayer()`/`canPlay()` to refine it,
 because those mutate `SpellAbility` state and would perturb the games being
-measured.
+measured. (Schema 19's candidate filter does call `canPlay()`, but only on
+pool abilities whose activator `getAllPossibleAbilities` already set, and
+seeded games are verified identical with it on.)
 
 ## Ability pool audit: the bot API is engine-complete (`-Dmagicnet.abilitydiff=N`)
 

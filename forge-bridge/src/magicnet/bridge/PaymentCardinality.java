@@ -54,7 +54,7 @@ final class PaymentCardinality {
     }
 
     /** Fallback for producers whose colours cannot be resolved statically. */
-    private static final List<Integer> ANY_COLOUR =
+    static final List<Integer> ANY_COLOUR =
             java.util.Collections.unmodifiableList(
                     java.util.Arrays.asList(0, 1, 2, 3, 4));
 
@@ -184,6 +184,23 @@ final class PaymentCardinality {
         /** For each colour index, the amount produced if this option is chosen. */
         final List<int[]> options = new ArrayList<>(); // {colourIndex, amount}
         String key = "";
+        /** Schema 18: produces snow mana (can pay a {S} shard, see MaskCost.SNOW). */
+        boolean snow;
+        /**
+         * Schema 18 (ManaPayment's model): sources sharing a {@code group} (a
+         * card) and {@code alt} come from one ability activation; different
+         * alts of a group exclude each other (one card, one tap). Null group:
+         * independent.
+         */
+        Object group;
+        int alt;
+        /** The ability's own mana cost (filters, Signets), as shard masks + generic; null if none. */
+        List<Byte> costShards;
+        int costGeneric;
+        /** Output of an ability with a mana cost: cannot pay a cost shard (MaskCost.COST_FLAG). */
+        boolean filterOut;
+        /** An untapped creature: can be tapped for a "tap an untapped creature" mana cost (MaskCost.CREATURE). */
+        boolean fodder;
     }
 
     static List<Src> sources(Player me, SpellAbility forSa) {
@@ -267,7 +284,7 @@ final class PaymentCardinality {
     }
 
     /** Does this ability mirror other permanents' colours rather than declare its own? */
-    private static boolean reflects(SpellAbility ma) {
+    static boolean reflects(SpellAbility ma) {
         try {
             return ma.getApi() == forge.game.ability.ApiType.ManaReflected;
         } catch (Throwable ignored) {
@@ -285,7 +302,7 @@ final class PaymentCardinality {
      * names; purity is asserted behaviourally by the snapshot test in
      * {@code MaskCost}, not by reading the implementation.
      */
-    private static List<Integer> reflected(SpellAbility ma) {
+    static List<Integer> reflected(SpellAbility ma) {
         List<Integer> out = new ArrayList<>();
         try {
             for (String name : forge.game.card.CardUtil.getReflectableManaColors(ma)) {
@@ -317,7 +334,7 @@ final class PaymentCardinality {
      * and loses only its any-colour ability when the spell is not a creature of
      * the named type.
      */
-    private static boolean unrestricted(AbilityManaPart mp, SpellAbility forSa) {
+    static boolean unrestricted(AbilityManaPart mp, SpellAbility forSa) {
         if (forSa == null) {
             return true;
         }
@@ -342,7 +359,7 @@ final class PaymentCardinality {
      * self-announcing direction (Forge rejects a too-loose proposal; a
      * too-strict one deletes the action with no symptom).
      */
-    private static boolean playable(SpellAbility ma) {
+    static boolean playable(SpellAbility ma) {
         try {
             return ma.canPlay();
         } catch (Throwable ignored) {
@@ -361,7 +378,7 @@ final class PaymentCardinality {
         return 1;
     }
 
-    private static List<Integer> producible(AbilityManaPart mp, SpellAbility ma) {
+    static List<Integer> producible(AbilityManaPart mp, SpellAbility ma) {
         List<Integer> out = new ArrayList<>();
         try {
             if (mp.isAnyMana()) {

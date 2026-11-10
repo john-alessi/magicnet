@@ -84,6 +84,69 @@ belief-model TARGET and must never reach the model as input: it is a sibling of
 ``state``, not inside any token, it is never sent to a live agent, and
 :meth:`HistoryReassembler.absorb` rejects a live request carrying it.
 
+Decision candidates and the prompt (schema 16)
+----------------------------------------------
+``actions`` is the ordered candidate list the policy returns an index into.
+Each candidate is one of:
+
+* ``{"ref": "<handle or id>"}`` -- the choice IS a game object or player that
+  already has a token (a target, a defender, an attacker to block, a scry
+  card being ordered, a library-search pick). It resolves through the same
+  id/handle table as edges, never to an individual hidden card. A pick from
+  the viewer's own library at an unknown position references that card
+  name's aggregate (``n:<name>`` id), so identical copies are ONE candidate.
+* an option token ``{"type": "action", "id": "a<i>", "edges": [...],
+  "components": {"verb": ..., ...}}`` -- a choice with no token of its own:
+  an ability to cast/activate/play (``ability`` text, ``target_candidates``,
+  ``mana_ability``), pass, a mode, a number (``value``), confirm/decline,
+  pay (``cost``), "choose nothing", ... ``verb`` is from
+  ``magicnet.schema.ACTION_VERBS``; ``i`` in ``a<i>`` is the candidate's index.
+  Schema 17 (``-Dmagicnet.payment``): ``pay_mana`` steps offer
+  ``activate_mana`` (``ability``, ``mana_color``, ``mana_amount``),
+  ``use_pool`` (``mana_color``, ``mana_amount``, ``restricted``, ``snow``,
+  ``rider``) and ``pay_life``; ``pay_convoke`` offers ``convoke``/
+  ``improvise`` (``pays``); ``pay_delve`` references graveyard cards. Their
+  prompts carry ``remaining_*``, ``spent_*`` and ``life_paid``. Schema 18:
+  ``pay_sacrifice``/``pay_discard``/``pay_exile``/``pay_tap``/``pay_untap``/
+  ``pay_return``/``pay_reveal`` reference one card per decision (prompt
+  ``cost``, ``min``/``max`` or ``remaining_power``); ``choose_optional_cost``
+  and ``choose_additional_cost`` offer ``optional_cost`` (``cost``,
+  ``ability``, ``value``); ``pay_mana_combo`` offers ``choose_color``
+  (``mana_color``); ``pay_convoke`` may offer ``waterbend``. See
+  forge-bridge/README.md, "Mana payment" and "Non-mana costs". Schema 20:
+  ``announce`` (the value of X) offers ``number`` options (``value``); its
+  prompt carries ``announce`` ("X") and ``min``/``max``.
+
+The record's ``prompt`` is one ``{"type": "decision", "id": "q", ...}`` token:
+``kind`` (``magicnet.schema.DECISION_KINDS``), ``prompt_text``, ``min``/
+``max``, ``optional``, ``selected_count``, and edges to the asking ability /
+card (``stack_object``, ``source_is``, ``obj``, ``attacks``, ``blocks``) and
+(``selected``) to what earlier steps of the same decomposed decision chose.
+
+For a pointer decoder, :func:`decision_tokens` is the full token list --
+``decision.tokens`` (history + state), then the prompt, then the option
+tokens in candidate order -- and :func:`resolve_candidates` maps each
+candidate to its index in that list. :func:`resolve_edges` on that list
+resolves prompt and option edges too.
+
+The stack (schema 19)
+---------------------
+A spell on the stack -- cast, copied (``copy``), or still being cast
+(``casting``: its card is in the Stack zone before it is paid for) -- is its
+card's ``game_object`` token in zone ``stack`` (id ``c<N>``, named unless
+face down and hidden from the viewer), with ``side`` (controller),
+``stack_depth`` (0 = top; a spell being cast is the top), the card's
+characteristics, ``x_paid``/``kicked``/``modes``, ``target_<i>`` edges and
+``owner_is`` when owner != controller. A ``stack_item`` is always an ability
+(``side``, ``stack_depth``, ``is_trigger``, ``ability``, ``source_is`` and
+``target_<i>`` edges). Prompts asked while a spell is cast point
+``stack_object``/``source_is`` at its card token.
+
+Since schema 19 every edge of a record (history, state, prompt, options)
+resolves to a token of that record through the id/handle table: the bridge
+rewrites a state edge to an object without a token to its tracking handle,
+or omits it. ``scripts/validate_dump.py`` enforces this.
+
 Ids are join keys, not features
 -------------------------------
 Token ``id`` properties exist only to resolve ``edges`` to token indices. They
@@ -94,10 +157,12 @@ them; callers building tensors must do both.
 
 from __future__ import annotations
 
+import glob
+import gzip
 import json
 import re
 from collections import defaultdict
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -105,11 +170,16 @@ from magicnet.schema import COMPONENTS
 
 # Bumped by the Java side on any change that alters the meaning of an existing
 # field. Refuse unknown schemas rather than silently misreading them.
-SUPPORTED_SCHEMA = 15
+SUPPORTED_SCHEMA = 20
 
-# ``api`` of the explicit "pass priority" option. Present (always last) only on
-# decisions where passing is legal; there is no sentinel value for passing.
-PASS_API = "Pass"
+# ``verb`` of the explicit "pass priority" option token (schema 16). Present
+# (always last) only on decisions where passing is legal; there is no sentinel
+# value for passing.
+PASS_VERB = "pass"
+
+# Token ``type`` of decision option tokens and of the record's prompt token.
+OPTION_TYPE = "action"
+PROMPT_TYPE = "decision"
 
 # Properties that must never reach the model.
 #
@@ -125,7 +195,7 @@ PASS_API = "Pass"
 # Player ids (``p0``/``p1``) are deliberately kept. There are only two, they are
 # stable, and ``from_player``/``to_player``/``actor`` are meaningless without
 # them.
-_LEAK_PROPS = frozenset({"id", "handles"})
+_LEAK_PROPS = frozenset({"id", "handles", "ref"})
 
 # Record field of the training-only hidden-information labels (schema 15).
 HIDDEN_TRUTH = "hidden_truth"
@@ -205,10 +275,12 @@ class Decision:
     history: list[dict]
     # Non-history state tokens for this decision only.
     state: list[dict]
-    # Legal action pool, in the order the policy indexes into.
+    # Candidate list, in the order the policy indexes into (schema 16): each a
+    # ``{"ref": ...}`` reference to an existing token or an option token.
     actions: list[dict]
-    # Index into ``actions`` of the option taken. Passing is an explicit
-    # option (see PASS_API); -1 only marks a live request with no outcome yet.
+    # Index into ``actions`` of the candidate taken. Passing is an explicit
+    # option token (verb PASS_VERB); -1 marks a live request with no outcome
+    # yet, or a recorded choice whose expert answer could not be located.
     chosen: int
     # How the chosen action was resolved: identity, signature, absent or pass.
     chosen_match: str
@@ -216,6 +288,8 @@ class Decision:
     # ({"region", "cards", "total"} per region), or None when the dump was
     # written without -Dmagicnet.labels=true. A target, never a model input.
     hidden_truth: list[dict] | None = None
+    # Schema 16: the decision prompt token (type "decision", id "q").
+    prompt: dict | None = None
 
     @property
     def tokens(self) -> list[dict]:
@@ -226,7 +300,7 @@ class Decision:
     def pass_index(self) -> int | None:
         """Index of the explicit pass option, or None if passing is not legal."""
         for i, opt in enumerate(self.actions):
-            if opt.get("api") == PASS_API:
+            if is_option(opt) and comp(opt, "verb") == PASS_VERB:
                 return i
         return None
 
@@ -308,11 +382,22 @@ class HistoryReassembler:
             chosen=rec.get("chosen", -1),
             chosen_match=rec.get("chosen_match", "pending"),
             hidden_truth=rec.get(HIDDEN_TRUTH),
+            prompt=rec.get("prompt"),
         )
 
 
+def open_text(path: str | Path):
+    """Open a dump for reading as text; ``.gz`` files (generator shards) are
+    decompressed on the fly."""
+    path = Path(path)
+    if path.suffix == ".gz":
+        return gzip.open(path, "rt", encoding="utf-8")
+    return path.open(encoding="utf-8")
+
+
 def load(path: str | Path) -> Iterator[Decision]:
-    """Stream decisions from a dump, reassembling delta-encoded history.
+    """Stream decisions from a dump (plain or ``.gz``), reassembling
+    delta-encoded history.
 
     Yields lazily so that dumps larger than memory can be processed; the only
     retained state is one running history per ``(game, viewer)``.
@@ -323,7 +408,7 @@ def load(path: str | Path) -> Iterator[Decision]:
     path = Path(path)
     reassembler = HistoryReassembler()
 
-    with path.open() as handle:
+    with open_text(path) as handle:
         for lineno, line in enumerate(handle, start=1):
             line = line.strip()
             if not line:
@@ -342,22 +427,41 @@ def load(path: str | Path) -> Iterator[Decision]:
             yield reassembler.absorb(rec, where=f"{path}:{lineno}")
 
 
+def load_many(paths: str | Path | Iterable[str | Path]) -> Iterator[Decision]:
+    """Stream decisions from several dumps in turn (e.g. the
+    ``shard_*.jsonl.gz`` files of ``scripts/generate_dumps.py``).
+
+    *paths* is one path, a glob pattern (``"out/shard_*.jsonl.gz"``), a
+    directory (its ``shard_*.jsonl.gz`` files) or an iterable of those;
+    patterns and directories expand in sorted order. Each file is read with
+    :func:`load`, so history is reassembled per file (game numbers restart
+    in every shard: key games by ``(path, game)``, see ``Decision.game``).
+    """
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    for p in paths:
+        p = Path(p)
+        if p.is_dir():
+            files = sorted(p.glob("shard_*.jsonl.gz"))
+        elif any(ch in str(p) for ch in "*?["):
+            files = [Path(f) for f in sorted(glob.glob(str(p)))]
+        else:
+            files = [p]
+        for f in files:
+            yield from load(f)
+
+
 def resolve_edges(tokens: list[dict]) -> list[list[tuple[str, int]]]:
     """Resolve each token's edges from id references to token indices.
 
     Returns one list of ``(relation, target_index)`` per token. Edges whose
-    target is not present are dropped rather than raising: a token can legally
-    reference something outside the viewer's information set, and silently
-    omitting an unseen referent is the correct redaction behaviour.
+    target is not present are dropped rather than raising. Since schema 19
+    the bridge writes none (``scripts/validate_dump.py`` fails on one), so a
+    drop here means a record from an older or broken writer.
     """
-    index_of: dict[str, int] = {}
-    for i, tok in enumerate(tokens):
-        tok_id = tok.get("id")
-        if tok_id is not None:
-            index_of[str(tok_id)] = i
-        # Schema 13: a tracking handle resolves to the one token it is assigned to.
-        for handle in tok.get("handles", ()):
-            index_of[handle] = i
+    # Schema 13: a tracking handle resolves to the one token it is assigned to.
+    # Schema 16: works unchanged on decision_tokens() (prompt "q", options "a<i>").
+    index_of = _index_of(tokens)
 
     out: list[list[tuple[str, int]]] = []
     for tok in tokens:
@@ -380,6 +484,9 @@ def strip_ids(tokens: list[dict]) -> list[dict]:
     Card references are dropped wherever they appear, not just under ``id``;
     ``handles`` (schema 13) go too. History events reach board objects through
     their edges, which :func:`resolve_edges` has already turned into indices.
+    Schema 16: apply to :func:`decision_tokens` to strip the prompt and option
+    tokens as well (their ``q``/``a<i>`` ids are join keys too); reference
+    candidates are consumed through :func:`resolve_candidates`, never embedded.
     """
     cleaned = []
     for tok in tokens:
@@ -427,49 +534,77 @@ def _sorted_components(tok: dict) -> dict:
     return {**tok, COMPONENTS: tuple(sorted(tok[COMPONENTS].items(), key=lambda kv: kv[0]))}
 
 
-def resolve_option_edges(decision: "Decision") -> list[list[tuple[str, int]]]:
-    """Resolve each option's object references to indices into ``tokens``.
+def is_ref(candidate: dict) -> bool:
+    """Whether a candidate references an existing token (``{"ref": ...}``)."""
+    return "ref" in candidate
 
-    Options name the game objects they concern -- the creature being declared as
-    an attacker, the permanent being fetched -- so a pointer-style head can
-    attend to those objects' own representations rather than recovering them
-    from the description string.
 
-    Returns one list of ``(relation, token_index)`` per option, in option order.
-    Unresolvable references are dropped for the same reason as in
-    :func:`resolve_edges`: an option may legitimately refer to something outside
-    the viewer's information set.
+def is_option(candidate: dict) -> bool:
+    """Whether a candidate is an option token (schema 16)."""
+    return candidate.get("type") == OPTION_TYPE
+
+
+def option_tokens(decision: "Decision") -> list[dict]:
+    """The decision's option tokens, in candidate order (references skipped)."""
+    return [c for c in decision.actions if is_option(c)]
+
+
+def decision_tokens(decision: "Decision") -> list[dict]:
+    """Every token a pointer decoder attends over, in a fixed layout:
+
+    ``decision.tokens`` (history then state, indices ``0 .. N-1``), then the
+    prompt at index ``N`` (when the record has one), then the option tokens in
+    candidate order. Reference candidates add nothing: they point into
+    ``decision.tokens``. Resolve edges over this list with
+    :func:`resolve_edges` and candidates with :func:`resolve_candidates`.
     """
-    index = {
-        tok["id"]: i for i, tok in enumerate(decision.tokens) if tok.get("id") is not None
-    }
-    resolved = []
-    for opt in decision.actions:
-        here = []
-        for edge in opt.get("edges", []) or []:
-            target = index.get(edge.get("to"))
-            if target is not None:
-                here.append((edge.get("rel", ""), target))
-        resolved.append(here)
-    return resolved
+    prompt = [decision.prompt] if decision.prompt is not None else []
+    return decision.tokens + prompt + option_tokens(decision)
 
 
-def strip_option_ids(actions: list[dict]) -> list[dict]:
-    """Drop join keys from options, leaving only model-visible fields.
+def _index_of(tokens: list[dict]) -> dict[str, int]:
+    index_of: dict[str, int] = {}
+    for i, tok in enumerate(tokens):
+        tok_id = tok.get("id")
+        if tok_id is not None:
+            index_of[str(tok_id)] = i
+        for handle in tok.get("handles", ()):
+            index_of[handle] = i
+    return index_of
 
-    Call after :func:`resolve_option_edges`. Mirrors :func:`strip_ids`, and
-    exists because options are a separate array from tokens and were therefore
-    not covered by it -- which is how an unstripped raw id reached the model
-    once already.
+
+def resolve_candidates(decision: "Decision") -> list[int]:
+    """Map each candidate to its token index in :func:`decision_tokens`.
+
+    A reference resolves to the token its id/handle names (an index below
+    ``len(decision.tokens)``); an option token to its own position after the
+    prompt. So ``decision_tokens(d)[resolve_candidates(d)[i]]`` is the token
+    candidate ``i`` stands for, and the list is the pointer head's candidate
+    index set (label: ``resolve_candidates(d)[d.chosen]``).
+
+    Raises:
+        SchemaError: on a reference that resolves to no token -- the bridge
+            only writes references it resolved, so this is a broken record.
     """
-    return [
-        {
-            k: v
-            for k, v in opt.items()
-            if k not in _LEAK_PROPS and k != "edges" and not _is_card_ref(v)
-        }
-        for opt in actions
-    ]
+    toks = decision_tokens(decision)
+    index_of = _index_of(decision.tokens)
+    base = len(decision.tokens) + (1 if decision.prompt is not None else 0)
+    out: list[int] = []
+    n_opt = 0
+    for i, cand in enumerate(decision.actions):
+        if is_ref(cand):
+            target = index_of.get(cand["ref"])
+            if target is None:
+                raise SchemaError(
+                    f"game {decision.game} decision {decision.decision}: candidate {i} "
+                    f"references {cand['ref']!r}, which no token carries"
+                )
+            out.append(target)
+        else:
+            out.append(base + n_opt)
+            n_opt += 1
+    assert len(toks) == base + n_opt
+    return out
 
 
 @dataclass

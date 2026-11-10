@@ -377,6 +377,11 @@ def test_layout_flags_misplaced_keys_false_flags_and_object_ids() -> None:
     }
 
 
+def test_layout_flags_an_empty_name() -> None:
+    face_down = _bf("c3", "", face_down=True)
+    assert validate_dump.check_layout([face_down, _bf("c4", "Bear")]) == {"empty string: game_object.name": 1}
+
+
 def test_layout_flags_forge_run_context_in_strings() -> None:
     old_style = _H().ev("trigger", ability="Whenever an opponent draws a card, they lose 2 life. "
                                             "[Player: P1-[Test] History Midrange B]")
@@ -470,3 +475,133 @@ def test_live_request_with_hidden_truth_is_rejected() -> None:
     with pytest.raises(SchemaError, match="hidden_truth"):
         HistoryReassembler().absorb(rec, where=LIVE_REQUEST)
     assert HistoryReassembler().absorb(rec).hidden_truth == TRUTH
+
+
+# ---- schema 16: decision candidates and the prompt ------------------------
+
+BEAR = _with(_nest({"type": "game_object", "zone": "self_battlefield", "id": "c9", "name": "Bear"}), "h1")
+ISLANDS = _nest({"type": "library_card", "zone": "self_library", "id": "n:Island", "name": "Island",
+                 "count": 3})
+
+
+def _option(i: int, verb: str, edges: dict | None = None, **comps) -> dict:
+    tok = {"type": "action", "id": f"a{i}", "components": {"verb": verb, **comps}}
+    if edges:
+        tok["edges"] = [{"rel": r, "to": t} for r, t in edges.items()]
+    return tok
+
+
+def _decision(state: list[dict], actions: list[dict], kind: str = "choose_entity",
+              prompt_edges: dict | None = None, chosen: int = 0):
+    from magicnet.dump import HistoryReassembler
+    prompt = {"type": "decision", "id": "q", "components": {"kind": kind}}
+    if prompt_edges:
+        prompt["edges"] = [{"rel": r, "to": t} for r, t in prompt_edges.items()]
+    return HistoryReassembler().absorb({
+        "schema": SUPPORTED_SCHEMA, "game": 0, "decision": 0, "viewer": "P0-Mono Red Burn",
+        "kind": kind, "turn": 1, "phase": "MAIN1", "hist_from": 0, "hist_new": [], "hist_total": 0,
+        "state": state, "prompt": prompt, "actions": actions, "chosen": chosen, "chosen_match": "index"})
+
+
+def test_candidates_map_refs_to_tokens_and_options_after_the_prompt() -> None:
+    from magicnet.dump import decision_tokens, resolve_candidates, resolve_edges
+    dec = _decision([SELF, BEAR, ISLANDS],
+                    [_option(0, "choose_nothing"), {"ref": "h1"}, {"ref": "n:Island"},
+                     _option(3, "confirm", {"source_is": "h1"})],
+                    prompt_edges={"selected": "c9", "source_is": "h1"})
+    toks = decision_tokens(dec)
+    assert [t.get("id") for t in toks] == ["p0", "c9", "n:Island", "q", "a0", "a3"]
+    assert resolve_candidates(dec) == [4, 1, 2, 5]
+    assert resolve_edges(toks)[3:] == [[("selected", 1), ("source_is", 1)], [], [("source_is", 1)]]
+    assert dec.pass_index is None
+    passing = _decision([SELF], [_option(0, "cast"), _option(1, "pass")], kind="ability", chosen=1)
+    assert passing.pass_index == 1 and passing.is_pass
+
+
+def test_candidate_refs_must_resolve_to_one_visible_token() -> None:
+    hidden = _nest({"type": "game_object", "zone": "opp_hand", "id": "c5"})
+    check = validate_dump.check_candidates
+    assert check([_decision([SELF, BEAR, ISLANDS, OPP_HAND],
+                            [{"ref": "h1"}, {"ref": "n:Island"}, {"ref": "p0"}])]) == {}
+    assert check([_decision([SELF, OPP_HAND, hidden],
+                            [{"ref": "r:opp_hand"}, {"ref": "c5"}, {"ref": "c77"}, {"ref": "p0"},
+                             {"ref": "p0"}])]) == {
+        "candidate ref to hidden region r:opp_hand (choose_entity)": 1,
+        "candidate ref to hidden individual card in opp_hand (choose_entity)": 1,
+        "candidate ref resolves to 0 tokens (choose_entity)": 1,
+        "duplicate reference candidate": 1,
+    }
+    assert check([_decision([SELF], [_option(0, "pass"), _option(1, "cast")], kind="ability"),
+                  _decision([SELF], [_option(1, "frobnicate", {"selected": "p0"})])]) == {
+        "ability decision without exactly one, last, pass option": 1,
+        "option token id is not a<index>": 1,
+        "option verb 'frobnicate' not in ACTION_VERBS": 1,
+        "selected edge off the prompt": 1,
+    }
+
+
+def test_option_text_must_not_carry_a_deck_name() -> None:
+    forbidden = validate_dump.deck_names(["P0-Mono Red Burn", "P1-[Pioneer] #06 - Azorius Control"])
+    assert {"Mono Red Burn", "[Pioneer] #06 - Azorius Control"} <= forbidden
+    clean = _option(0, "confirm", ability="When this creature enters, draw a card.")
+    leaky = _option(1, "confirm", ability="Target player ([Pioneer] #06 - Azorius Control) draws.")
+    assert validate_dump.check_layout([clean], forbidden=forbidden) == {}
+    assert validate_dump.check_layout([leaky], forbidden=forbidden) == {
+        "player/deck name in string component: action.ability": 1}
+
+
+# ---- schema 19: every edge resolves ------------------------------------------
+
+def test_every_edge_must_resolve_to_a_token_of_the_record() -> None:
+    spell = _nest({"type": "game_object", "zone": "stack", "id": "c4", "name": "Shock", "side": "opp",
+                   "stack_depth": 0})
+    spell["edges"] = [{"rel": "target_0", "to": "h1"}]
+    ability = {"type": "stack_item", "zone": "stack", "id": "s2",
+               "edges": [{"rel": "source_is", "to": "c4"}], "components": {"stack_depth": 1}}
+    ok = _decision([SELF, BEAR, spell, ability], [_option(0, "confirm", {"source_is": "h1"})],
+                   prompt_edges={"stack_object": "c4"})
+    assert validate_dump.check_edges([ok])[0] == {}
+    # A raw card ref with no token: an ability whose source left play, unsettled.
+    orphan = dict(ability, edges=[{"rel": "source_is", "to": "c77"}])
+    bad = _decision([SELF, BEAR, spell, orphan], [_option(0, "confirm", {"source_is": "c78"})],
+                    prompt_edges={"stack_object": "s9"})
+    assert validate_dump.check_edges([bad])[0] == {
+        "unresolved state edge stack_item.source_is": 1,
+        "unresolved prompt edge decision.stack_object": 1,
+        "unresolved option edge action.source_is": 1,
+    }
+
+
+def test_a_face_down_opponent_spell_or_permanent_is_nameless(tmp_path: Path) -> None:
+    morph = _nest({"type": "game_object", "zone": "stack", "id": "c3", "name": "Willbender", "side": "opp",
+                   "face_down": True, "stack_depth": 0})
+    own = dict(morph, components={**morph["components"], "side": "self"})
+    assert _leaks(tmp_path, [([], [SELF, own])]) == {}
+    assert _leaks(tmp_path, [([], [SELF, morph])]) == {"named face-down opponent object in stack": 1}
+    assert _leaks(tmp_path, [([], [SELF, _bf("c4", "Willbender", face_down=True)])]) == {
+        "named face-down opponent object in opp_battlefield": 1}
+
+
+# ---- own effect looking at the opponent's library (Portent) ------------------------
+
+def test_opponent_library_cards_shown_by_own_effect_may_be_named(tmp_path: Path) -> None:
+    def top(name: str, h: str) -> dict:
+        return _with(_nest({"type": "library_card", "zone": "opp_library", "id": f"c{h[1:]}", "name": name,
+                            "count": 1, "depth_from_top": 0}), h)
+
+    def portent(h: _H, actor: str) -> list[dict]:
+        cast = h.ev("cast", {"actor": actor}, step=1)
+        resolve = h.ev("resolve", {"actor": actor, "cause": cast["id"]}, step=2)
+        return [cast, resolve, h.ev("move_zone", {"obj": "h7", "player": "p1", "cause": resolve["id"]}, step=2,
+                                    **{"from": "opp_library", "to": "opp_library", "move_kind": "put"})]
+
+    h = _H()
+    assert _leaks(tmp_path, [(portent(h, "p0"), [SELF, top("Seal of Cleansing", "h7")])]) == {}
+    h = _H()
+    assert _leaks(tmp_path, [(portent(h, "p1"), [SELF, top("Seal of Cleansing", "h7")])]) == {
+        "unseen card identified in history (opp_library -> opp_library)": 1,
+        "unredacted name in opp_library: Seal of Cleansing": 1}
+    h = _H()
+    shuffled = portent(h, "p0") + [h.ev("shuffle", {"player": "p1"}, step=3)]
+    assert _leaks(tmp_path, [(shuffled, [SELF, top("Seal of Cleansing", "h7")])]) == {
+        "unredacted name in opp_library: Seal of Cleansing": 1}

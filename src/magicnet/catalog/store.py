@@ -9,12 +9,18 @@ when the embedded text and the embedding model are unchanged.
 The key catalog (keys.py) is stored alongside: ``keys(key, version)`` rows,
 written by ``sync_keys`` as a new catalog version when the registry changes, and
 ``strings`` recording the text of every non-card vector in ``embeddings``.
+
+PCA bases (pca.py) are stored append-only too: ``pca_bases`` holds each fit,
+``pca_current(version, basis_id)`` logs which basis is current from which
+catalog version, and ``pca_drift`` records how well the current basis explains
+cards added or changed by each refresh.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -24,7 +30,10 @@ from pathlib import Path
 import numpy as np
 
 from magicnet.cards import iter_unique_cards, name_claims
+from magicnet.catalog import pca
 from magicnet.catalog.embedder import Embedder
+
+log = logging.getLogger("magicnet.catalog")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -103,11 +112,47 @@ CREATE TABLE IF NOT EXISTS unregistered_keys (  -- keys looked up but not in the
     last_seen   TEXT NOT NULL,
     hits        INTEGER NOT NULL
 );
+-- PCA bases (additive). A fit is never overwritten; refreshes never refit.
+CREATE TABLE IF NOT EXISTS pca_bases (
+    basis_id        INTEGER PRIMARY KEY,
+    catalog_version INTEGER NOT NULL REFERENCES versions,  -- version created by the fit; pool = cards as of it
+    created_at      TEXT NOT NULL,
+    model           TEXT NOT NULL,   -- embedding model/dims the basis applies to
+    dims            INTEGER NOT NULL,
+    n_components    INTEGER NOT NULL,  -- K
+    n_cards         INTEGER NOT NULL,
+    pool_hash       TEXT NOT NULL,   -- sha256 of the sorted (oracle_id, text_hash) pool
+    method          TEXT NOT NULL,
+    total_variance  REAL NOT NULL,   -- trace of the pool covariance
+    mean            BLOB NOT NULL,   -- float64 (dims,)
+    components      BLOB NOT NULL,   -- float64 (K, dims), orthonormal rows by decreasing variance
+    eigenvalues     BLOB NOT NULL,   -- float64 (K,); std = sqrt, ratio = / total_variance
+    baseline_fuv    BLOB NOT NULL,   -- float64 (K,): pool mean per-card unexplained variance at d = 1..K
+    note            TEXT
+);
+CREATE TABLE IF NOT EXISTS pca_current (  -- which basis is current from each version on
+    version  INTEGER PRIMARY KEY REFERENCES versions,
+    basis_id INTEGER NOT NULL REFERENCES pca_bases
+);
+CREATE TABLE IF NOT EXISTS pca_drift (  -- refresh-time fit of new/changed cards under the current basis
+    version    INTEGER NOT NULL REFERENCES versions,
+    basis_id   INTEGER NOT NULL REFERENCES pca_bases,
+    d          INTEGER NOT NULL,
+    n_cards    INTEGER NOT NULL,     -- added/changed cards with a vector
+    fuv        REAL NOT NULL,        -- their mean fraction of unexplained variance at d
+    baseline   REAL NOT NULL,        -- the fitting pool's mean at d
+    margin     REAL NOT NULL,
+    exceeded   INTEGER NOT NULL,     -- fuv > baseline + margin
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (version, basis_id, d)
+);
 """
 
 CARD_FIELDS = ("name", "mana_cost", "cmc", "type_line", "colors", "color_identity", "layout", "text")
 CHANGE_KINDS = ("added", "changed", "updated", "removed")
 EMBED_CHUNK = 1000  # texts per embedder call + commit, so a crash mid-refresh doesn't re-pay
+DRIFT_DIMS = (32, 64)
+DRIFT_MARGIN = 0.10
 
 
 def sha256(text: str) -> str:
@@ -176,9 +221,13 @@ class KeySyncReport:
 
 
 class CatalogStore:
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, *, drift_dims: tuple[int, ...] = DRIFT_DIMS,
+                 drift_margin: float = DRIFT_MARGIN):
         self.db_path = Path(db_path)
         self.conn = connect(self.db_path)
+        self.drift_dims = drift_dims
+        self.drift_margin = drift_margin
+        self._bases: dict[int, dict] = {}  # basis_id -> row with arrays (immutable)
 
     def close(self) -> None:
         self.conn.close()
@@ -584,7 +633,180 @@ class CatalogStore:
             self.conn.execute("ROLLBACK")
             raise
         report.version = version
+        vec_changed = [r["text_hash"] for r in new_rows if kinds.get(r["oracle_id"]) in ("added", "changed")]
+        try:
+            self.record_drift(version, vec_changed)
+        except Exception:  # monitoring must never fail a refresh
+            log.exception("PCA drift check failed for version %s", version)
         return report
+
+    # -- PCA bases ----------------------------------------------------------
+    def _pool(self) -> tuple[list[str], list[str]]:
+        """The card pool the catalog serves: (oracle_ids, text_hashes) of the
+        latest row of every card not removed, sorted by oracle_id."""
+        latest, removed = self._latest_cards()
+        oids = sorted(latest.keys() - removed)
+        return oids, [latest[o][0] for o in oids]
+
+    @staticmethod
+    def _pool_hash(oids: list[str], hashes: list[str]) -> str:
+        return sha256("\n".join(f"{o}\t{h}" for o, h in zip(oids, hashes)))
+
+    def _vectors(self, hashes: list[str]) -> tuple[np.ndarray, list[str]]:
+        """Stacked vectors of the hashes that have one, and those that don't."""
+        have = self.string_vectors(set(hashes))
+        found = [have[h] for h in hashes if h in have]
+        x = np.stack(found) if found else np.zeros((0, self.model[1]), dtype="<f4")
+        return x, [h for h in hashes if h not in have]
+
+    def _new_derived_version(self, note: str) -> int:
+        """Inside a write transaction: a version that reuses the latest
+        version's dump metadata, so card lookups and freshness are unaffected."""
+        latest_v = self.latest_version()
+        if latest_v is None:
+            raise RuntimeError("catalog has no version yet; import or refresh cards first")
+        prev = self.conn.execute("SELECT * FROM versions WHERE version = ?", (latest_v,)).fetchone()
+        version = latest_v + 1
+        self.conn.execute("INSERT INTO versions VALUES (?, ?, ?, ?, ?)",
+                          (version, now_iso(), prev["dump_updated_at"], prev["dump_source"], note))
+        return version
+
+    def fit_pca(self, k: int = pca.DEFAULT_COMPONENTS, *, model: str | None = None, dims: int | None = None,
+                note: str = "", activate: bool = True) -> dict:
+        """Fit a PCA basis on the whole current card pool and store it as a
+        new basis at a new catalog version (made current there unless
+        ``activate`` is False). ``model``/``dims``, if given, must match the
+        catalog's. Never called implicitly."""
+        cat_model, cat_dims = self.model
+        if (model or cat_model, dims or cat_dims) != (cat_model, cat_dims):
+            raise ValueError(f"basis requested for {model}/{dims} but the catalog stores "
+                             f"{cat_model}/{cat_dims}; vectors from different models are not interchangeable")
+        oids, hashes = self._pool()
+        x, missing = self._vectors(hashes)
+        if missing:
+            raise RuntimeError(f"{len(missing)} pool cards have no {cat_model}/{cat_dims} vector; "
+                               "refresh with an embedder before fitting")
+        res = pca.fit(x, k)
+        pool_hash = self._pool_hash(oids, hashes)
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            if self._pool_hash(*self._pool()) != pool_hash:
+                raise RuntimeError("the card pool changed during the fit; run it again")
+            basis_id = (self.conn.execute("SELECT MAX(basis_id) FROM pca_bases").fetchone()[0] or 0) + 1
+            version = self._new_derived_version(note or f"pca basis {basis_id}")
+            self.conn.execute(
+                "INSERT INTO pca_bases VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (basis_id, version, now_iso(), cat_model, cat_dims, len(res.eigenvalues), len(oids), pool_hash,
+                 "eigh(cov float64, 1/N); sign: max |loading| > 0", res.total_variance,
+                 res.mean.astype("<f8").tobytes(), res.components.astype("<f8").tobytes(),
+                 res.eigenvalues.astype("<f8").tobytes(), res.baseline_fuv.astype("<f8").tobytes(), note),
+            )
+            if activate:
+                self.conn.execute("INSERT INTO pca_current VALUES (?, ?)", (version, basis_id))
+            self.conn.execute("COMMIT")
+        except BaseException:
+            self.conn.execute("ROLLBACK")
+            raise
+        return self.pca_info(basis_id)
+
+    def use_pca(self, basis_id: int, note: str = "") -> int:
+        """Make an existing basis current from a new catalog version on."""
+        if self._basis_row(basis_id) is None:
+            raise KeyError(f"no PCA basis {basis_id}")
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            version = self._new_derived_version(note or f"pca basis {basis_id} made current")
+            self.conn.execute("INSERT INTO pca_current VALUES (?, ?)", (version, basis_id))
+            self.conn.execute("COMMIT")
+        except BaseException:
+            self.conn.execute("ROLLBACK")
+            raise
+        return version
+
+    def pca_current_id(self, as_of: int) -> int | None:
+        """The basis current at version ``as_of``. Before the first activation
+        that is the first activated basis, so a pin never changes once any
+        basis exists (like the key registry)."""
+        q = "SELECT basis_id FROM pca_current {} ORDER BY version {} LIMIT 1"
+        row = (self.conn.execute(q.format("WHERE version <= ?", "DESC"), (as_of,)).fetchone()
+               or self.conn.execute(q.format("", "ASC")).fetchone())
+        return row[0] if row else None
+
+    def _basis_row(self, basis_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM pca_bases WHERE basis_id = ?", (basis_id,)).fetchone()
+
+    def pca_info(self, basis_id: int) -> dict:
+        """Metadata of a basis (no arrays besides explained-variance ratios)."""
+        b = self.pca_basis(basis_id)
+        ratio = b["eigenvalues"] / b["total_variance"]
+        cum = np.cumsum(ratio)
+        current_from = [r[0] for r in self.conn.execute(
+            "SELECT version FROM pca_current WHERE basis_id = ? ORDER BY version", (basis_id,))]
+        return {
+            **{k: b[k] for k in ("basis_id", "catalog_version", "created_at", "model", "dims", "n_components",
+                                 "n_cards", "pool_hash", "method", "total_variance", "note")},
+            "current_from": current_from,
+            "cumulative_explained": {d: float(cum[d - 1]) for d in (8, 16, 32, 64, 128, 256)
+                                     if d <= b["n_components"]},
+            "baseline_fuv": {d: float(b["baseline_fuv"][d - 1]) for d in (8, 16, 32, 64, 128, 256)
+                             if d <= b["n_components"]},
+        }
+
+    def pca_basis(self, basis_id: int) -> dict:
+        b = self._bases.get(basis_id)
+        if b is None:
+            row = self._basis_row(basis_id)
+            if row is None:
+                raise KeyError(f"no PCA basis {basis_id}")
+            b = dict(row)
+            for key in ("mean", "components", "eigenvalues", "baseline_fuv"):
+                b[key] = np.frombuffer(row[key], dtype="<f8")
+            b["components"] = b["components"].reshape(b["n_components"], b["dims"])
+            self._bases[basis_id] = b
+        return b
+
+    def pca_bases(self) -> list[dict]:
+        return [self.pca_info(r[0]) for r in self.conn.execute("SELECT basis_id FROM pca_bases ORDER BY basis_id")]
+
+    def record_drift(self, version: int, text_hashes: list[str]) -> list[dict]:
+        """Mean unexplained variance of new/changed card vectors under the
+        basis current at ``version``, against the basis's pool baseline.
+        Logs a warning when it exceeds the baseline by ``drift_margin``."""
+        basis_id = self.pca_current_id(version)
+        if basis_id is None or not text_hashes:
+            return []
+        b = self.pca_basis(basis_id)
+        if (b["model"], b["dims"]) != self.model:
+            log.warning("PCA basis %s is for %s/%s, not the catalog's model; drift not computed",
+                        basis_id, b["model"], b["dims"])
+            return []
+        x, _ = self._vectors(list(dict.fromkeys(text_hashes)))
+        if len(x) == 0:
+            return []
+        fuv = pca.fuv_curve(x.astype(np.float64) - b["mean"], b["components"]).mean(axis=0)
+        rows, ts = [], now_iso()
+        for d in sorted({min(d, b["n_components"]) for d in self.drift_dims}):
+            new, base = float(fuv[d - 1]), float(b["baseline_fuv"][d - 1])
+            exceeded = new > base + self.drift_margin
+            rows.append({"version": version, "basis_id": basis_id, "d": d, "n_cards": len(x), "fuv": new,
+                         "baseline": base, "margin": self.drift_margin, "exceeded": exceeded, "created_at": ts})
+            if exceeded:
+                log.warning("PCA drift: %d new/changed cards at version %d leave %.3f of their variance "
+                            "unexplained at d=%d under basis %d (pool baseline %.3f, margin %.2f); "
+                            "consider a deliberate pca-fit", len(x), version, new, d, basis_id, base,
+                            self.drift_margin)
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO pca_drift VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [(r["version"], r["basis_id"], r["d"], r["n_cards"], r["fuv"], r["baseline"], r["margin"],
+              int(r["exceeded"]), r["created_at"]) for r in rows],
+        )
+        return rows
+
+    def pca_drift(self, basis_id: int | None = None) -> list[dict]:
+        q = "SELECT * FROM pca_drift {} ORDER BY version, basis_id, d"
+        rows = (self.conn.execute(q.format("WHERE basis_id = ?"), (basis_id,)) if basis_id is not None
+                else self.conn.execute(q.format("")))
+        return [{**dict(r), "exceeded": bool(r["exceeded"])} for r in rows]
 
     def refresh_from_dump(
         self,

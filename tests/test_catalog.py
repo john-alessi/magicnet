@@ -355,3 +355,129 @@ def test_client_keys_and_strings_over_http(env):
         assert {k["key"]: k["description"] for k in body["keys"]}["life"] == "my life total"
         assert body["patterns"][0]["key"] == "ctr_{name}"
         assert http.post("/strings/embed", json={"strings": ["x" * 9000]}).status_code == 413
+
+
+# -- PCA basis ---------------------------------------------------------------
+
+from magicnet.catalog import pca as pcamod  # noqa: E402
+
+
+def lowrank(n: int, dims: int = 16, rank: int = 4, seed: int = 0) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    x = rng.normal(size=(n, rank)) * np.arange(rank, 0, -1) @ rng.normal(size=(rank, dims))
+    x += 0.1 * rng.normal(size=(n, dims))
+    return x / np.linalg.norm(x, axis=1, keepdims=True)
+
+
+def test_pca_fit_is_deterministic_orthonormal_and_prefix_consistent():
+    x = lowrank(300)
+    a, b = pcamod.fit(x, 8), pcamod.fit(x.copy(), 8)
+    for f in ("mean", "components", "eigenvalues", "baseline_fuv"):
+        assert np.array_equal(getattr(a, f), getattr(b, f))
+    assert np.allclose(a.components @ a.components.T, np.eye(8), atol=1e-12)
+    assert np.all(np.diff(a.eigenvalues) <= 0)
+    rows = np.arange(8)
+    assert np.all(a.components[rows, np.abs(a.components).argmax(axis=1)] > 0)  # sign convention
+    small = pcamod.fit(x, 3)
+    assert np.allclose(small.components, a.components[:3], atol=1e-12)
+    assert np.allclose(small.eigenvalues, a.eigenvalues[:3]) and np.allclose(small.baseline_fuv, a.baseline_fuv[:3])
+    assert pcamod.fit(x, 999).components.shape == (16, 16)  # K capped at dims
+
+
+def test_pca_basis_whitening_and_round_trip_error_is_discarded_variance():
+    x = lowrank(400)
+    f = pcamod.fit(x, 16)
+    for d in (2, 5):
+        basis = pcamod.PCABasis(1, d, f.mean, f.components[:d], f.std[:d])
+        z = basis.project(x)
+        assert z.shape == (400, d) and np.allclose(z.var(axis=0), 1.0) and np.allclose(z.mean(axis=0), 0, atol=1e-9)
+        err = ((basis.inverse(z) - x) ** 2).sum(axis=1).mean()
+        assert np.isclose(err, f.total_variance - f.eigenvalues[:d].sum())
+        assert np.allclose(basis.inverse(basis.project(x, whiten=False), whitened=False), basis.inverse(z))
+        assert basis.project(x[0]).shape == (d,) and basis.project(x.reshape(20, 20, 16)).shape == (20, 20, d)
+
+    import torch
+
+    xt = torch.as_tensor(x, dtype=torch.float32)
+    basis = pcamod.PCABasis(1, 4, f.mean.astype("<f4"), f.components[:4].astype("<f4"), f.std[:4].astype("<f4"))
+    zt = basis.project(xt)
+    assert isinstance(zt, torch.Tensor) and zt.dtype == torch.float32 and zt.device == xt.device
+    assert np.allclose(zt.numpy(), basis.project(x.astype("<f4")), atol=1e-5)
+    assert isinstance(basis.inverse(zt), torch.Tensor)
+
+
+class PCAEmbedder(FakeEmbedder):
+    """16-d unit vectors near a rank-4 subspace; texts containing "Odd" are isotropic."""
+    model, dims = "fake-embed", 16
+    W = np.random.default_rng(0).normal(size=(4, 16))
+
+    def embed(self, texts):
+        self.embedded.extend(texts)
+        out = []
+        for t in texts:
+            rng = np.random.default_rng(int(sha256(t)[:12], 16))
+            v = rng.normal(size=16) if "Odd" in t else rng.normal(size=4) * [4, 3, 2, 1] @ self.W + 0.1 * rng.normal(size=16)
+            out.append(v / np.linalg.norm(v))
+        return np.array(out, dtype=np.float32)
+
+
+POOL = [card(f"p{i:02d}", f"Card {i}", f"Effect {i}.") for i in range(40)]
+
+
+@pytest.fixture
+def pca_env(tmp_path: Path):
+    embedder = PCAEmbedder()
+    store = CatalogStore(tmp_path / "cat.sqlite", drift_dims=(4, 8))
+    store.refresh_from_dump(write_dump(tmp_path / "pool.jsonl.gz", POOL + [card("dig", "Digi", digital=True)]),
+                            dump_updated_at=T1, embedder_factory=lambda: embedder)
+    return store, embedder, tmp_path
+
+
+def test_pca_fit_stores_versioned_basis_and_refresh_records_drift_without_refit(pca_env):
+    store, embedder, tmp_path = pca_env
+    with pytest.raises(ValueError, match="not interchangeable"):
+        store.fit_pca(8, model="other-model")
+    info = store.fit_pca(8)
+    assert (info["basis_id"], info["catalog_version"], info["n_cards"], info["n_components"]) == (1, 2, 40, 8)
+    assert info["current_from"] == [2] and store.dump_updated_at() == T1
+    assert info["cumulative_explained"][8] > 0.95  # rank-4 pool
+    again = store.fit_pca(8)  # never overwritten: a new basis with identical arrays
+    assert again["basis_id"] == 2 and np.array_equal(store.pca_basis(1)["components"], store.pca_basis(2)["components"])
+
+    ins = POOL + [card(f"n{i}", f"Odd {i}", f"Odd thing {i}.") for i in range(10)]
+    report = store.refresh_from_dump(write_dump(tmp_path / "next.jsonl.gz", ins), dump_updated_at=T2,
+                                     embedder_factory=lambda: embedder)
+    assert report.version == 4 and len(store.pca_bases()) == 2  # refresh does not refit
+    drift = store.pca_drift()
+    assert [(r["version"], r["basis_id"], r["d"], r["n_cards"]) for r in drift] == [(4, 2, 4, 10), (4, 2, 8, 10)]
+    assert all(r["exceeded"] and r["fuv"] > r["baseline"] + 0.1 for r in drift)
+    assert store.use_pca(1) == 5 and store.pca_current_id(5) == 1 and store.pca_current_id(4) == 2
+
+
+def test_pca_over_http_and_client_pins_basis_of_its_version(pca_env):
+    store, embedder, tmp_path = pca_env
+    service = CatalogService(store.db_path, FakeScryfall(tmp_path, T1, POOL), lambda: embedder, tmp_path / "dumps")
+    with TestClient(create_app(service)) as http:
+        assert http.get("/pca").status_code == 404
+        store.fit_pca(8)  # basis 1 at version 2
+        early = CatalogClient(http=http, version=1)  # predates any basis: pins the first one
+        pinned = CatalogClient(http=http)
+        assert pinned.version == 2
+        store.refresh_from_dump(write_dump(tmp_path / "next.jsonl.gz", POOL + [card("n", "Odd", "Odd.")]),
+                                dump_updated_at=T2, embedder_factory=lambda: embedder)
+        store.fit_pca(6)  # basis 2 at version 4
+        b = pinned.pca(4)
+        assert (b.basis_id, b.dims, b.components.shape, b.std.shape, b.mean.shape) == (1, 4, (4, 16), (4,), (16,))
+        assert early.pca(4).basis_id == 1 and CatalogClient(http=http).pca(4).basis_id == 2
+        assert pinned.pca(4, basis_id=2).basis_id == 2 and pinned.pca(4) is b  # cached
+        ref = store.pca_basis(1)
+        assert np.allclose(b.components, ref["components"][:4]) and np.allclose(b.std, np.sqrt(ref["eigenvalues"][:4]))
+        t = pinned.card_targets(["Card 1", "p02"], dims=4)
+        assert t.shape == (2, 4) and np.allclose(t, b.project(pinned.vectors(["Card 1", "p02"])))
+        body = http.get("/pca", params={"as_of": 3, "components": 2}).json()
+        assert body["basis_id"] == 1 and body["components_returned"] == 2 and len(body["explained_variance_ratio"]) == 2
+        assert http.get("/pca", params={"basis_id": 1, "components": 9}).status_code == 400
+        assert http.get("/pca", params={"basis_id": 7}).status_code == 404
+        drift = http.get("/pca/drift").json()
+        assert [(r["version"], r["basis_id"], r["n_cards"]) for r in drift] == [(3, 1, 1), (3, 1, 1)]
+        assert [b["basis_id"] for b in http.get("/pca/bases").json()] == [1, 2]

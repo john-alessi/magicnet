@@ -6,6 +6,10 @@
     uv run python -m magicnet.catalog refresh --dump PATH --updated-at TS   # from a local dump
     uv run python -m magicnet.catalog keys-sync --dry-run   # what a key-registry sync would embed
     uv run python -m magicnet.catalog keys-sync             # record keys.json, embed missing descriptions
+    uv run python -m magicnet.catalog pca-fit [--components 256]   # fit + store a new PCA basis (deliberate)
+    uv run python -m magicnet.catalog pca-list              # stored bases and which is current
+    uv run python -m magicnet.catalog pca-use BASIS_ID      # make an older basis current again
+    uv run python -m magicnet.catalog pca-drift             # drift log written by refreshes
 
 `refresh` writes to the DB directly; while `serve` is running, use
 `POST /admin/refresh` instead so the server's single-flight guard applies.
@@ -18,6 +22,8 @@ import json
 import logging
 from dataclasses import asdict
 from pathlib import Path
+
+from magicnet.catalog.store import DRIFT_MARGIN
 
 REPO = Path(__file__).resolve().parents[3]
 DEFAULT_DB = REPO / "data/catalog/catalog.sqlite"
@@ -35,6 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--check-interval", type=float, default=300.0, help="min seconds between Scryfall metadata checks")
+    s.add_argument("--drift-margin", type=float, default=DRIFT_MARGIN,
+                   help="warn when new cards' PCA unexplained variance exceeds the basis baseline by this much")
 
     i = sub.add_parser("import", help="seed an empty catalog from the existing offline artefacts")
     i.add_argument("--dump", type=Path, default=REPO / "data/raw/scryfall-default-cards.jsonl.gz")
@@ -56,6 +64,15 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("--no-embed", action="store_true", help="record the registry but embed nothing")
     k.add_argument("--registry", type=Path, help="keys.json to load (default: the packaged one)")
 
+    p = sub.add_parser("pca-fit", help="fit a PCA basis on the current card pool and store it as a new version")
+    p.add_argument("--components", type=int, default=256, help="K components to store (clients use any prefix)")
+    p.add_argument("--note", default="")
+    p.add_argument("--no-activate", action="store_true", help="store the basis without making it current")
+    sub.add_parser("pca-list", help="list stored PCA bases")
+    u = sub.add_parser("pca-use", help="make a stored basis current from a new catalog version on")
+    u.add_argument("basis_id", type=int)
+    sub.add_parser("pca-drift", help="print the drift log")
+
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -69,11 +86,22 @@ def main(argv: list[str] | None = None) -> int:
         from magicnet.catalog.service import CatalogService, create_app
 
         service = CatalogService(args.db, HttpScryfall(), AzureEmbedder.from_env, args.dump_dir,
-                                 check_interval=args.check_interval)
+                                 check_interval=args.check_interval, drift_margin=args.drift_margin)
         uvicorn.run(create_app(service), host=args.host, port=args.port)
         return 0
 
     store = CatalogStore(args.db)
+    if args.cmd.startswith("pca-"):
+        if args.cmd == "pca-fit":
+            out = store.fit_pca(args.components, note=args.note, activate=not args.no_activate)
+        elif args.cmd == "pca-list":
+            out = store.pca_bases()
+        elif args.cmd == "pca-use":
+            out = {"version": store.use_pca(args.basis_id), "basis_id": args.basis_id}
+        else:
+            out = store.pca_drift()
+        print(json.dumps(out, indent=2))
+        return 0
     if args.cmd == "keys-sync":
         from magicnet.catalog.keys import KEYS_PATH, load_registry
 

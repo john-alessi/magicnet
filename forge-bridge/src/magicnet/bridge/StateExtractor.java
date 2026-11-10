@@ -86,6 +86,20 @@ public final class StateExtractor {
     }
 
     /**
+     * Schema 16: the id of a name aggregate of the viewer's own library (the
+     * unknown-position copies of one card name), {@code "n:" + name}. A join
+     * key only, so a decision candidate (a library search pick) can reference
+     * the aggregate: identical copies are one candidate, not several.
+     */
+    static String nameAggregateRef(String name) {
+        return "n:" + name;
+    }
+
+    static boolean isNameAggregateRef(Object id) {
+        return id instanceof String && ((String) id).startsWith("n:");
+    }
+
+    /**
      * Ref for an entity that may be either. A combat defender is a player, a
      * planeswalker, or a battle; the latter two are cards.
      */
@@ -104,12 +118,12 @@ public final class StateExtractor {
 
     /** A single token in the intermediate representation. */
     public static final class Tok {
+        private static final java.util.Set<String> NAME_KEYS = java.util.Set.of(
+                "name", "oracle_id", "source", "source_oracle_id", "named_card", "named_card_oracle_id");
         final String type;
         final String zone;
         final Map<String, Object> props = new LinkedHashMap<>();
         final List<String[]> edges = new ArrayList<>(2);
-        /** Stack items only: id of the spell's card, for handle assignment. Not serialized. */
-        int spellCard = -1;
         /**
          * Hidden regions only: the true cards this token stands for (the
          * aggregate's members, or a face-down object's real card). Never
@@ -124,6 +138,11 @@ public final class StateExtractor {
         }
 
         Tok p(String k, Object v) {
+            // A name nobody can read (Forge's face-down state is named "") is
+            // absent, never an empty string.
+            if (v instanceof String && ((String) v).isEmpty() && NAME_KEYS.contains(k)) {
+                return this;
+            }
             if (v != null) {
                 props.put(k, v);
             }
@@ -202,7 +221,7 @@ public final class StateExtractor {
                         sb.append(',');
                     }
                     sb.append("{\"rel\":\"").append(edges.get(i)[0])
-                      .append("\",\"to\":\"").append(edges.get(i)[1]).append("\"}");
+                      .append("\",\"to\":\"").append(esc(edges.get(i)[1])).append("\"}");
                 }
                 sb.append(']');
             }
@@ -352,7 +371,7 @@ public final class StateExtractor {
         }
 
         // 5. Stack.
-        emitStack(out, game);
+        emitStack(out, game, viewer, hub);
 
         // 6. Delayed triggers (reflection; no public getter).
         emitDelayedTriggers(out, game);
@@ -372,6 +391,8 @@ public final class StateExtractor {
             emitEffectEvents(out, game, gh, hub);
             gh.decorate(out, stateFrom);
         }
+        // 10. Schema 19: every state edge resolves or is absent.
+        settleEdges(out, stateFrom, gh);
 
         // Legal actions are deliberately not tokens here: they live only in the
         // record's `actions` array (Serializer), the single copy the policy
@@ -419,7 +440,7 @@ public final class StateExtractor {
                         continue;
                     }
                 }
-                Tok t = cardToken(c, zoneName, visible, z);
+                Tok t = cardToken(c, zoneName, visible, z, viewer);
                 if (knownByReveal) {
                     // Lets the leak check tell a legitimate reveal from a leak.
                     t.p("known_by_reveal", true);
@@ -616,6 +637,7 @@ public final class StateExtractor {
         }
         for (Map.Entry<String, Integer> e : hist.entrySet()) {
             out.add(new Tok("library_card", zoneName)
+                    .p("id", nameAggregateRef(e.getKey()))
                     .p("name", e.getKey())
                     .p("oracle_id", OracleIds.of(example.get(e.getKey())))
                     .p("count", e.getValue()));
@@ -636,7 +658,15 @@ public final class StateExtractor {
         }
     }
 
-    private static Tok cardToken(Card c, String zoneName, boolean visible, ZoneType z) {
+    private static boolean mayLookFaceDown(Card c, Player viewer) {
+        try {
+            return viewer != null && c.getView().canFaceDownBeShownTo(viewer.getView());
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static Tok cardToken(Card c, String zoneName, boolean visible, ZoneType z, Player viewer) {
         Tok t = new Tok("game_object", zoneName);
         try {
             t.p("id", cardRef(c.getId()));
@@ -647,7 +677,18 @@ public final class StateExtractor {
             // (nor oracle id or state): per the rules a face-down or unseen card
             // has no name, and an absent key means unknown.
             boolean hidden = !visible && (z == ZoneType.Hand || z == ZoneType.Sideboard);
-            if (!hidden && !(c.isFaceDown() && !visible)) {
+            // CR 708.5: the controller of a face-down permanent or spell may look
+            // at it; elsewhere (face-down exile) Forge's own look permission
+            // decides. Forge names the face-down state "", so the real face
+            // is read off the original state.
+            boolean faceDownSeen = c.isFaceDown() && visible
+                    && (z == ZoneType.Battlefield || z == ZoneType.Stack || mayLookFaceDown(c, viewer));
+            if (!hidden && faceDownSeen) {
+                String[] truth = OracleIds.truthOf(c);
+                t.p("name", truth[0]);
+                t.p("oracle_id", truth[1]);
+                t.p("state", String.valueOf(c.getCurrentStateName()));
+            } else if (!hidden && !c.isFaceDown()) {
                 t.p("name", c.getName());
                 t.p("oracle_id", OracleIds.of(c));
                 t.p("state", String.valueOf(c.getCurrentStateName()));
@@ -971,48 +1012,302 @@ public final class StateExtractor {
         }
     }
 
-    private static void emitStack(List<Tok> out, Game game) {
+    /**
+     * The stack (schema 19), top first.
+     *
+     * <p>A SPELL -- cast, copied, or still being cast -- is its card's
+     * {@code game_object} token in zone {@code stack}, built like a card in any
+     * other zone ({@link #cardToken}): id {@code c<N>}, name and oracle id
+     * unless it is face down and the viewer does not control it (as on the
+     * battlefield; {@code face_down: true}), layer-resolved
+     * characteristics, cast-time choices. An ABILITY (activated or triggered)
+     * is a {@code stack_item} with a {@code source_is} edge to its source.
+     *
+     * <p>Both carry {@code stack_depth} (0 = top) and {@code side} (whose spell
+     * or ability: the stack is one shared zone, so unlike the battlefield the
+     * zone does not say who controls it), and their targets as ordered
+     * {@code target_0..3}/{@code target_more} edges, the slots history and
+     * options use. A spell whose owner is not its controller also carries
+     * {@code owner_is}, as on the battlefield.
+     *
+     * <p>A spell being cast (modes, targets, costs, payment) is already in
+     * Forge's Stack zone but has no stack instance until it is paid for. It is
+     * emitted with {@code casting: true} at the depth it will have once cast,
+     * i.e. as the top (0), every stack instance below it one deeper -- so
+     * depths stay non-negative and a cast never reorders what is already
+     * there. A card left in the Stack zone by a refused cast on Forge's AI path
+     * (failed_unrolled, which is not rewound) reads the same way.
+     */
+    private static void emitStack(List<Tok> out, Game game, Player viewer, HistoryHub hub) {
         try {
+            java.util.Set<Integer> instances = new java.util.HashSet<>();
             for (SpellAbilityStackInstance si : game.getStack()) {
-                Tok t = new Tok("stack_item", Schema.STACK)
-                        .p("id", "s" + si.getId())
-                        .flag("is_spell", si.isSpell())
-                        .flag("is_trigger", si.isTrigger());
-                try {
-                    Card src = si.getSourceCard();
-                    if (src != null && si.isSpell()) {
-                        t.spellCard = src.getId();
-                    }
-                    if (src != null) {
-                        t.p("source", src.getName());
-                        t.p("source_oracle_id", OracleIds.of(src));
-                        t.edge(Schema.SOURCE_IS, cardRef(src.getId()));
-                    }
-                } catch (Throwable ignored) {
-                    // skip
+                Card src = si.getSourceCard();
+                if (si.isSpell() && src != null) {
+                    instances.add(src.getId());
                 }
-                try {
-                    TargetChoices tc = si.getTargetChoices();
-                    if (tc != null) {
-                        for (Card tgt : tc.getTargetCards()) {
-                            t.edge(Schema.TARGETING, cardRef(tgt.getId()));
-                        }
-                        for (Player tp : tc.getTargetPlayers()) {
-                            t.edge(Schema.TARGETING, playerRef(tp.getId()));
-                        }
-                        for (SpellAbility ts : tc.getTargetSpells()) {
-                            if (ts.getHostCard() != null) {
-                                t.edge(Schema.TARGETING_SPELL, cardRef(ts.getHostCard().getId()));
-                            }
-                        }
-                    }
-                } catch (Throwable ignored) {
-                    // skip
+            }
+            List<Card> casting = new ArrayList<>();
+            for (Card c : game.getCardsIn(ZoneType.Stack)) {
+                if (!instances.contains(c.getId())) {
+                    casting.add(c);
                 }
-                out.add(t);
+            }
+            GameHistory.Attempt attempt = GameHistory.currentAttempt();
+            // The spell of the open attempt is the one actually being cast: on top.
+            casting.sort((a, b) -> Boolean.compare(!isAttemptHost(attempt, b), !isAttemptHost(attempt, a)));
+            int depth = 0;
+            for (Card c : casting) {
+                SpellAbility sa = isAttemptHost(attempt, c) ? attempt.sa : null;
+                List<String> modes = sa != null && hub != null ? hub.pendingModes() : null;
+                out.add(spellToken(c, sa, depth++, true, modes, viewer, game));
+            }
+            for (SpellAbilityStackInstance si : game.getStack()) {
+                Card src = si.getSourceCard();
+                List<String> modes = hub == null ? null : hub.modesOf(si.getId());
+                if (si.isSpell() && src != null) {
+                    out.add(spellToken(src, si.getSpellAbility(), depth++, false, modes, viewer, game));
+                } else {
+                    out.add(abilityToken(si, depth++, modes, viewer, game, hub));
+                }
             }
         } catch (Throwable ignored) {
             // skip
+        }
+    }
+
+    private static boolean isAttemptHost(GameHistory.Attempt a, Card c) {
+        try {
+            return a != null && a.sa != null && a.sa.isSpell() && a.sa.getHostCard() != null
+                    && a.sa.getHostCard().getId() == c.getId();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean ownedByViewer(Card c, Player viewer) {
+        try {
+            return viewer != null && viewer.equals(c.getController());
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /** A spell on the stack as its card's token (see {@link #emitStack}). */
+    private static Tok spellToken(Card c, SpellAbility sa, int depth, boolean casting, List<String> modes,
+                                  Player viewer, Game game) {
+        // As on the battlefield: a face-down spell is named only to its controller.
+        boolean visible = !c.isFaceDown() || ownedByViewer(c, viewer);
+        Tok t = cardToken(c, Schema.STACK, visible, ZoneType.Stack, viewer);
+        try {
+            t.flag("face_down", c.isFaceDown());
+            Player ctrl = c.getController();
+            Player owner = c.getOwner();
+            if (ctrl != null) {
+                t.p("side", ctrl.equals(viewer) ? "self" : "opp");
+            }
+            t.p("stack_depth", depth);
+            t.flag("casting", casting);
+            t.flag("copy", c.isCopiedSpell());
+            if (owner != null && ctrl != null && !owner.equals(ctrl)) {
+                t.edge(Schema.OWNER_IS, playerRef(owner.getId()));
+            }
+            if (c.getType() != null && c.getType().isCreature()) {
+                t.p("power", c.getNetPower());
+                t.p("toughness", c.getNetToughness());
+                t.p("base_power", c.getCurrentPower());
+                t.p("base_toughness", c.getCurrentToughness());
+            }
+            addCounters(t, c.getCounters());
+            addCharacteristics(t, c);
+            if (!c.isFaceDown()) {
+                // Cast-time choices are public on the stack.
+                if (sa != null) {
+                    Integer x = sa.getXManaCostPaid();
+                    if (x != null) {
+                        t.p("x_paid", x);
+                    }
+                    if (sa.isKicked()) {
+                        t.p("kicked", true);
+                    }
+                }
+                if (modes != null && !modes.isEmpty()) {
+                    t.p("modes", modes);
+                }
+            }
+            addTargets(t, sa, game);
+        } catch (Throwable ignored) {
+            // partial token is still useful
+        }
+        return t;
+    }
+
+    /** An activated or triggered ability on the stack (see {@link #emitStack}). */
+    private static Tok abilityToken(SpellAbilityStackInstance si, int depth, List<String> modes,
+                                    Player viewer, Game game, HistoryHub hub) {
+        Tok t = new Tok("stack_item", Schema.STACK)
+                .p("id", "s" + si.getId())
+                .flag("is_trigger", si.isTrigger())
+                .p("stack_depth", depth);
+        SpellAbility sa = null;
+        try {
+            sa = si.getSpellAbility();
+            Player act = si.getActivatingPlayer();
+            if (act != null) {
+                t.p("side", act.equals(viewer) ? "self" : "opp");
+            }
+        } catch (Throwable ignored) {
+            // skip
+        }
+        try {
+            Card src = si.getSourceCard();
+            if (src != null) {
+                // A face-down source's name is hidden like the source itself.
+                if (!src.isFaceDown() || ownedByViewer(src, viewer)) {
+                    t.p("source", src.getName());
+                    t.p("source_oracle_id", OracleIds.of(src));
+                }
+                t.edge(Schema.SOURCE_IS, cardRef(src.getId()));
+            }
+        } catch (Throwable ignored) {
+            // skip
+        }
+        try {
+            t.p("ability", Serializer.optionText(hub == null ? null : hub.abilityTextOf(si.getId()), sa, game));
+        } catch (Throwable ignored) {
+            // no text
+        }
+        if (modes != null && !modes.isEmpty()) {
+            t.p("modes", modes);
+        }
+        addTargets(t, sa, game);
+        return t;
+    }
+
+    /**
+     * Ordered target edges of a spell or ability: every target of it and its
+     * sub-abilities, deduplicated, in the order history's cast event lists
+     * them. Card and player targets by ref; a spell or ability target by its
+     * stack token ({@link #stackRef}). Unresolvable refs are settled by
+     * {@link #settleEdges}.
+     */
+    private static void addTargets(Tok t, SpellAbility sa, Game game) {
+        if (sa == null) {
+            return;
+        }
+        try {
+            List<Object> seen = new ArrayList<>();
+            for (TargetChoices tc : sa.getAllTargetChoices()) {
+                if (tc == null) {
+                    continue;
+                }
+                for (GameEntity e : tc.getTargetEntities()) {
+                    if (e != null && !seen.contains(e)) {
+                        seen.add(e);
+                    }
+                }
+                for (SpellAbility ts : tc.getTargetSpells()) {
+                    if (ts != null && !seen.contains(ts)) {
+                        seen.add(ts);
+                    }
+                }
+            }
+            int i = 0;
+            for (Object o : seen) {
+                String slot = Schema.targetSlot(i++);
+                if (o instanceof SpellAbility) {
+                    t.edge(slot, stackRef((SpellAbility) o, game));
+                } else {
+                    t.edge(slot, entityRef((GameEntity) o));
+                }
+            }
+        } catch (Throwable ignored) {
+            // skip
+        }
+    }
+
+    /**
+     * The token id of a spell or ability on the stack: its card ({@code c<N>})
+     * for a spell, {@code s<N>} for an ability; a spell still being cast (its
+     * card already in the Stack zone, no stack instance yet) is its card. Null
+     * when {@code sa} is neither.
+     */
+    static String stackRef(SpellAbility sa, Game game) {
+        if (sa == null || game == null) {
+            return null;
+        }
+        try {
+            SpellAbility root = sa.getRootAbility();
+            for (SpellAbilityStackInstance si : game.getStack()) {
+                SpellAbility s = si.getSpellAbility();
+                boolean hit = s == sa || s == root || (s != null && root != null && s.getId() == root.getId())
+                        || (s instanceof forge.game.trigger.WrappedAbility
+                            && ((forge.game.trigger.WrappedAbility) s).getWrappedAbility() == root);
+                if (hit) {
+                    Card src = si.getSourceCard();
+                    return si.isSpell() && src != null ? cardRef(src.getId()) : "s" + si.getId();
+                }
+            }
+            SpellAbility r = root != null ? root : sa;
+            Card host = r.getHostCard();
+            if (r.isSpell() && host != null) {
+                Card live = game.getCardState(host, null);
+                if (live == null) {
+                    live = host;
+                }
+                if (live.isInZone(ZoneType.Stack)) {
+                    return cardRef(live.getId());
+                }
+            }
+        } catch (Throwable ignored) {
+            // not on the stack
+        }
+        return null;
+    }
+
+    /**
+     * Schema 19: every state edge resolves to a token of this state (by id or
+     * tracking handle) or is absent. A card ref with no token of its own -- an
+     * ability's source that left play, a target that ceased to exist or went
+     * to a hidden zone -- is rewritten to the card's tracking handle when this
+     * viewer's history has one (the handle sits on the phantom, aggregate or
+     * untracked token standing for the object now); otherwise the viewer cannot
+     * identify the referent and the edge is dropped. Both are counted
+     * ({@link StateStats#recordEdgeFixup}).
+     */
+    private static void settleEdges(List<Tok> out, int stateFrom, GameHistory gh) {
+        java.util.Set<String> known = new java.util.HashSet<>();
+        for (Tok t : out) {
+            Object id = t.props.get("id");
+            if (id != null) {
+                known.add(String.valueOf(id));
+            }
+            Object hs = t.props.get("handles");
+            if (hs instanceof List) {
+                for (Object h : (List<?>) hs) {
+                    known.add(String.valueOf(h));
+                }
+            }
+        }
+        for (int i = stateFrom; i < out.size(); i++) {
+            Tok t = out.get(i);
+            for (java.util.Iterator<String[]> it = t.edges.iterator(); it.hasNext();) {
+                String[] e = it.next();
+                if (known.contains(e[1])) {
+                    continue;
+                }
+                String h = null;
+                if (gh != null && e[1].matches("c\\d+")) {
+                    h = gh.handleForCard(Integer.parseInt(e[1].substring(1)));
+                }
+                if (h != null && known.contains(h)) {
+                    e[1] = h;
+                    StateStats.recordEdgeFixup("handle", e[0]);
+                } else {
+                    it.remove();
+                    StateStats.recordEdgeFixup("dropped", e[0]);
+                }
+            }
         }
     }
 

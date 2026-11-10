@@ -371,7 +371,25 @@ public final class GameHistory {
             t.handle = "h" + (nextHandle++);
             byHandle.put(t.handle, t);
         }
+        if (t.abilityId < 0) {
+            lastByCard.put(t.cardId, t);
+        }
         return t.handle;
+    }
+
+    /** Schema 19: the most recent card track that got a handle, by card id (kept after it is lost or ceased). */
+    private final Map<Integer, Track> lastByCard = new HashMap<>();
+
+    /**
+     * The handle this viewer's history uses for card {@code cardId}, or null
+     * when no history edge refers to it. A state edge to a card with no token
+     * of its own (an ability's source that left play, a target that ceased)
+     * points here instead: the handle is assigned to whatever token stands for
+     * the object now (its hidden zone's aggregate, a phantom, untracked).
+     */
+    String handleForCard(int cardId) {
+        Track t = lastByCard.get(cardId);
+        return t == null || t.handle == null || !referenced.contains(t.handle) ? null : t.handle;
     }
 
     private Track fresh(Card c, CardView v) {
@@ -595,17 +613,24 @@ public final class GameHistory {
             }
             boolean named = shown || nameVisible(c, null);
             Track t = tracks.get(c.getId());
-            if (t == null) {
+            boolean isNew = t == null;
+            if (isNew) {
                 t = fresh(c, null);
                 t.nameKnown = named;
             } else if (!t.nameKnown && named) {
                 t.nameKnown = true;
             }
-            if (shown && !canSee(c, z, owner)) {
+            // A reveal callback can pass a zoneless card (a face-down creature
+            // revealed as it dies): that says nothing about where the object
+            // is, so the tracked zone is kept -- overwriting it with null
+            // would send the handle to a phantom.
+            if (shown && z != null && !canSee(c, z, owner)) {
                 this.shown.put(c.getId(), new Object[] {z, resolving()});
             }
-            t.zone = z;
-            t.zoneOwner = owner;
+            if (z != null || isNew) {
+                t.zone = z;
+                t.zoneOwner = owner;
+            }
             t.ownerId = c.getOwner() == null ? -1 : c.getOwner().getId();
             if (named) {
                 snapshot(t, c.getView());
@@ -663,6 +688,11 @@ public final class GameHistory {
             CardView.CardStateView st = v.getCurrentState();
             if (st != null) {
                 s.types = st.getType() == null ? null : st.getType().toString();
+                if (s.types != null && s.types.isBlank()) {
+                    // An effect card ("The Monarch") has an empty type line:
+                    // absent, not an empty string component.
+                    s.types = null;
+                }
                 if (st.getType() != null && st.getType().isCreature()) {
                     s.power = st.getPower();
                     s.toughness = st.getToughness();
@@ -696,18 +726,15 @@ public final class GameHistory {
             return;
         }
         Map<String, StateExtractor.Tok> byId = new HashMap<>();
-        Map<Integer, StateExtractor.Tok> spellOnStack = new HashMap<>();
         Map<String, StateExtractor.Tok> aggregate = new HashMap<>();
         Map<String, StateExtractor.Tok> selfLibByName = new HashMap<>();
         for (int i = stateFrom; i < out.size(); i++) {
             StateExtractor.Tok t = out.get(i);
             Object id = t.props.get("id");
             if ("stack_item".equals(t.type)) {
+                // Abilities on the stack; a spell is its card's game_object (schema 19).
                 if (id != null) {
                     byId.put(String.valueOf(id), t);
-                }
-                if (t.spellCard >= 0) {
-                    spellOnStack.put(t.spellCard, t);
                 }
                 continue;
             }
@@ -716,7 +743,7 @@ public final class GameHistory {
             }
             // Schema 15: a hidden-region aggregate carries an "r:<zone>" id, but
             // it is still the aggregate, not an object a handle can resolve to by id.
-            if (id != null && !StateExtractor.isRegionRef(id)) {
+            if (id != null && !StateExtractor.isRegionRef(id) && !StateExtractor.isNameAggregateRef(id)) {
                 if (!isIndividualHidden(t)) {
                     byId.put(String.valueOf(id), t);
                 }
@@ -734,7 +761,7 @@ public final class GameHistory {
             if (t == null) {
                 continue;
             }
-            StateExtractor.Tok target = locate(t, byId, spellOnStack, aggregate, selfLibByName);
+            StateExtractor.Tok target = locate(t, byId, aggregate, selfLibByName);
             if (target == null) {
                 // Ceasing to exist is public (a token off the battlefield, a copy
                 // or ability off the stack), even for an object whose zone the
@@ -794,7 +821,7 @@ public final class GameHistory {
     }
 
     private StateExtractor.Tok locate(Track t, Map<String, StateExtractor.Tok> byId,
-            Map<Integer, StateExtractor.Tok> spellOnStack, Map<String, StateExtractor.Tok> aggregate,
+            Map<String, StateExtractor.Tok> aggregate,
             Map<String, StateExtractor.Tok> selfLibByName) {
         if (t.retired || t.lost || t.ceased) {
             return null;
@@ -827,9 +854,6 @@ public final class GameHistory {
         StateExtractor.Tok own = byId.get(StateExtractor.cardRef(t.cardId));
         if (own != null) {
             return own;
-        }
-        if (z == ZoneType.Stack) {
-            return spellOnStack.get(t.cardId);
         }
         String side = owner == vid ? "self" : "opp";
         String zn = zoneName(z, owner);
