@@ -262,6 +262,24 @@ public final class HistoryHub {
     /** Ability text by stack-instance id, from the cast event's view (the rendering history uses). */
     private final Map<Integer, String> abilityText = new HashMap<>();
 
+    /** Schema 19: modes chosen for a spell or ability, by stack-instance id (public on the stack). */
+    private final Map<Integer, List<String>> castModes = new HashMap<>();
+
+    /** Rendered ability text of a stack instance, or null if its cast event was not seen. */
+    String abilityTextOf(int siId) {
+        return abilityText.get(siId);
+    }
+
+    /** Modes chosen for a stack instance, or null. */
+    List<String> modesOf(int siId) {
+        return castModes.get(siId);
+    }
+
+    /** Modes chosen so far by the spell or ability being cast (not on the stack yet), or null. */
+    List<String> pendingModes() {
+        return modes.isEmpty() ? null : new ArrayList<>(modes);
+    }
+
     /** A game entity as a participant: a card (handle) or a player. */
     private Part entityPart(String role, Object e) {
         if (e instanceof Player) {
@@ -1574,6 +1592,7 @@ public final class HistoryHub {
         stackParts(r, sa, saId, true);
         targetParts(r, sa);
         if (!modes.isEmpty()) {
+            castModes.put(si.getId(), new ArrayList<>(modes));
             if (!"activate".equals(verb)) {
                 r.mods.put("modes", new ArrayList<>(modes));
             }

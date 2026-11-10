@@ -12,8 +12,18 @@ Changing the order is a schema change and invalidates existing checkpoints.
 
 from __future__ import annotations
 
-SCHEMA = 18
+SCHEMA = 20
 
+# Schema 19: a spell on the stack (cast, copied or still being cast) is its
+# card's ``game_object`` in zone ``stack`` (``side``, ``stack_depth``,
+# ``casting``, ``copy``, ``target_<i>`` edges); ``stack_item`` is an ability
+# only. ``targeting``/``targeting_spell`` are no longer emitted (kept so
+# relation indices do not shift). Every edge resolves to a token or is absent.
+#
+# Schema 20: decision kind ``announce`` (announceRequirements: the value of X,
+# offered as ``number`` options; prompt component ``announce``). Own
+# face-down cards carry their real name. Appended.
+#
 # Schema 18: non-mana cost choices (-Dmagicnet.payment). Decision kinds
 # ``pay_sacrifice``, ``pay_discard``, ``pay_exile``, ``pay_tap``, ``pay_untap``,
 # ``pay_return``, ``pay_reveal`` (one card per decision, candidates are
@@ -217,6 +227,8 @@ DECISION_KINDS: tuple[str, ...] = (
     # Schema 18: non-mana cost parts, optional costs, combination mana.
     "pay_sacrifice", "pay_discard", "pay_exile", "pay_tap", "pay_untap", "pay_return",
     "pay_reveal", "choose_optional_cost", "choose_additional_cost", "pay_mana_combo",
+    # Schema 20: announceRequirements (X).
+    "announce",
 )
 # Schema 17: colour a payment option adds or spends (C: colourless).
 MANA_COLORS: tuple[str, ...] = ("W", "U", "B", "R", "G", "C")

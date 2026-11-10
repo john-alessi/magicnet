@@ -25,6 +25,11 @@ Runs the checks that have to pass before a dump is trustworthy:
    or a harness player name.
    Schema 12: hidden means unnamed (``magicnet.dump.is_hidden``); a hidden
    card or history role never carries an ``oracle_id``.
+   Schema 19: a face-down opponent object (battlefield or stack) is nameless.
+   A named card in the opponent's library is accepted only at a position the
+   viewer's own effect showed it (Portent targeting the opponent: an
+   ``opp_library`` -> ``opp_library`` move caused by the viewer's spell),
+   until the card moves or that library is shuffled.
    Schema 7: ``affects`` edges must join two tokens the viewer can see, and
    choice props (chosen colour/type/player/number, named card, X, kicked)
    never sit on a face-down or redacted token, and a chosen player is one of
@@ -49,7 +54,15 @@ Runs the checks that have to pass before a dump is trustworthy:
    a visible token. Prompt and option tokens pass the token-layout and text
    checks of (4), which also reject any player's deck name in a string
    component.
-6. **Hidden-truth labels** (schema 15, ``-Dmagicnet.labels=true``) -- every
+6. **Edges resolve** (schema 19) -- every edge of every history, state,
+   prompt and option token resolves, through the id/handle table of
+   :func:`magicnet.dump.decision_tokens` (``magicnet.dump.resolve_edges``),
+   to a token of the same record. The bridge settles a state edge to an
+   object with no token of its own onto its tracking handle or omits it, so
+   an unresolved edge is a raw reference the model cannot follow (and a
+   consumer indexing ``id -> token`` would crash on). ``EDGE_ALLOWLIST`` lists
+   accepted exceptions: none.
+7. **Hidden-truth labels** (schema 15, ``-Dmagicnet.labels=true``) -- every
    hidden-region state token (``magicnet.dump.is_region``) has exactly one
    label whose ``total`` equals its ``count`` (1 for a face-down object) and
    the sum of its card counts; labels reference only region tokens of that
@@ -59,7 +72,7 @@ Runs the checks that have to pass before a dump is trustworthy:
    yet, ``chosen_match`` "pending") never carries labels.
 
 Usage:
-    uv run scripts/validate_dump.py --dump /tmp/dump.jsonl
+    uv run scripts/validate_dump.py --dump /tmp/dump.jsonl   (or a .jsonl.gz shard)
 """
 
 from __future__ import annotations
@@ -74,7 +87,7 @@ from pathlib import Path
 
 from magicnet.dump import (
     HIDDEN_TRUTH, OPTION_TYPE, PASS_VERB, PROMPT_TYPE, REGION_PREFIX, SchemaError, comp,
-    decision_tokens, flatten, is_hidden, is_option, is_ref, is_region, load, resolve_edges,
+    decision_tokens, flatten, is_hidden, is_option, is_ref, is_region, load, open_text, resolve_edges,
     strip_ids, summarise,
 )
 from magicnet.catalog.keys import load_registry
@@ -206,6 +219,37 @@ def check_candidates(decisions) -> Counter:
     return problems
 
 
+# (section, relation) pairs whose edges may legitimately not resolve. Empty:
+# since schema 19 the bridge emits no edge it cannot resolve (state edges are
+# settled in StateExtractor.settleEdges, prompt/option edges in
+# Serializer.Resolver, history edges point at handles every state assigns).
+EDGE_ALLOWLIST: frozenset[tuple[str, str]] = frozenset()
+
+
+def check_edges(decisions) -> tuple[Counter, Counter]:
+    """Check 6: every edge resolves to a token of its record. Returns
+    (problems, edges checked per section)."""
+    problems: Counter = Counter()
+    checked: Counter = Counter()
+    for dec in decisions:
+        toks = decision_tokens(dec)
+        nh, ns = len(dec.history), len(dec.state)
+        index_of = {}
+        for i, tok in enumerate(toks):
+            if tok.get("id") is not None:
+                index_of[str(tok["id"])] = i
+            for h in tok.get("handles", ()):
+                index_of[h] = i
+        for i, tok in enumerate(toks):
+            section = "history" if i < nh else "state" if i < nh + ns else (
+                "prompt" if tok.get("type") == PROMPT_TYPE else "option")
+            for e in tok.get("edges", ()):
+                checked[section] += 1
+                if e.get("to") not in index_of and (section, e.get("rel")) not in EDGE_ALLOWLIST:
+                    problems[f"unresolved {section} edge {tok.get('type')}.{e.get('rel')}"] += 1
+    return problems, checked
+
+
 def _viewer_ref(state: list[dict]) -> str | None:
     for tok in state:
         if tok.get("type") == "player" and comp(tok, "side") == "self":
@@ -277,6 +321,10 @@ class _Replay:
         self.phantom: set[str] = set()
         self.events: list[dict] = []
         self.lib_pending: tuple[int, int] | None = None
+        # Opponent library cards the viewer's own effect let it look at and
+        # put back (Portent targeting the opponent): known positions until
+        # they move or that library is shuffled.
+        self.opp_lib_seen: set[str] = set()
 
     def advance(self, history: list[dict]) -> None:
         if len(history) < self.consumed:
@@ -322,6 +370,8 @@ class _Replay:
             # Own-library reorders of a step with no scry/surveil of ours in it.
             self.problems["unseen card identified in history (self_library -> self_library)"] += self.lib_pending[1]
             self.lib_pending = None
+        if verb == "shuffle" and self.viewer not in _edges(ev, "player"):
+            self.opp_lib_seen.clear()
         if verb in ("scry", "surveil") and self.viewer in _edges(ev, "player"):
             self.looked_lib = step
             if self.lib_pending and self.lib_pending[0] == step:
@@ -338,6 +388,9 @@ class _Replay:
                     continue
                 if src == dst == "self_library" and self._own_effect(ev):
                     continue
+                if src == dst == "opp_library" and self._own_effect(ev):
+                    self.opp_lib_seen.add(h)
+                    continue
                 if src == dst == "self_library":
                     n = self.lib_pending[1] if self.lib_pending else 0
                     self.lib_pending = (step, n + 1)
@@ -352,6 +405,8 @@ class _Replay:
             for h in objs:
                 was = self.loc.get(h)
                 self.loc[h] = dst
+                if dst != "opp_library":
+                    self.opp_lib_seen.discard(h)
                 if was == "opp_hand" or src == "opp_hand":
                     self.known.discard(h)
                 if dst == "opp_hand":
@@ -421,6 +476,12 @@ class _Replay:
                     and tok.get("type") == "game_object"):
                 self.looked[tok["id"]] = not is_hidden(tok)
 
+    def knows_library_position(self, tok: dict) -> bool:
+        """Whether this named opponent-library card is one the viewer's own
+        effect showed it (and that has not moved or been shuffled away since)."""
+        handles = tok.get("handles", ())
+        return bool(handles) and all(h in self.opp_lib_seen and h not in self.ambiguous for h in handles)
+
     def explains(self, tok: dict) -> bool:
         """Whether this named opponent-hand token is accounted for by the history."""
         return any(h in self.known and h not in self.ambiguous for h in tok.get("handles", ()))
@@ -478,6 +539,12 @@ def check_board_relations(tokens: list[dict], edges: list[list[tuple[str, int]]]
             offenders[f"choice on face-down/redacted token: {sorted(chosen)}"] += 1
         if "chosen_player" in tok and tok["chosen_player"] not in players:
             offenders["chosen_player is not a player token"] += 1
+        # Schema 19: a face-down object the viewer does not control is nameless,
+        # on the battlefield (zone opp_*) and on the stack (side opp).
+        if (tok.get("type") == "game_object" and comp(tok, "face_down") and not is_hidden(tok)
+                and ((tok.get("zone") or "").startswith("opp_")
+                     or (tok.get("zone") == "stack" and comp(tok, "side") == "opp"))):
+            offenders[f"named face-down opponent object in {tok.get('zone')}"] += 1
     return offenders
 
 
@@ -569,6 +636,9 @@ def check_layout(tokens: list[dict], kinds: _Kinds | None = None,
         for key in tok:
             if key != COMPONENTS and not kinds[key]:
                 problems[f"component at top level: {key}"] += 1
+            if key != COMPONENTS and isinstance(tok[key], str) and not tok[key].strip():
+                # An unreadable name is absent (schema 12), never "".
+                problems[f"empty string: {tok.get('type')}.{key}"] += 1
         components = tok.get(COMPONENTS)
         if components is None:
             continue
@@ -602,9 +672,9 @@ def check_layout_dump(path: Path, limit: int) -> tuple[Counter, int]:
     kinds = _Kinds()
     problems: Counter = Counter()
     ids_in_names = 0
-    with path.open() as fh:
+    with open_text(path) as fh:
         forbidden = deck_names({json.loads(line).get("viewer") for line in fh if line.strip()})
-    with path.open() as fh:
+    with open_text(path) as fh:
         for n, line in enumerate(fh):
             if limit and n >= limit:
                 break
@@ -658,6 +728,8 @@ def check_leaks(path: Path, limit: int) -> tuple[int, Counter]:
                 leaks += 1
                 offenders[f"known_by_reveal without a recorded cause in {zone}: {name}"] += 1
                 continue
+            if zone == "opp_library" and tok.get("type") == "library_card" and rp.knows_library_position(raw):
+                continue
             if not is_hidden(raw):
                 leaks += 1
                 offenders[f"unredacted name in {zone}: {name}"] += 1
@@ -694,7 +766,7 @@ def _label_in(obj, path: str = "") -> str | None:
 
 
 def check_labels(path: Path, limit: int) -> tuple[Counter, int]:
-    """Check 6: hidden-truth labels against the region tokens of each record.
+    """Check 7: hidden-truth labels against the region tokens of each record.
 
     Works on raw records (not :func:`load`) so that a label smuggled into the
     observation is seen exactly where it was written. Returns (problems,
@@ -702,7 +774,7 @@ def check_labels(path: Path, limit: int) -> tuple[Counter, int]:
     """
     problems: Counter = Counter()
     labelled = unlabelled = 0
-    with path.open() as fh:
+    with open_text(path) as fh:
         for n, line in enumerate(fh):
             if limit and n >= limit:
                 break
@@ -786,12 +858,16 @@ def main() -> int:
     layout, ids_in_names = check_layout_dump(args.dump, args.limit)
     print(f"ids in names/refs  {ids_in_names} (informational)")
     candidates = check_candidates(islice(load(args.dump), args.limit or None))
+    edge_problems, edges_checked = check_edges(islice(load(args.dump), args.limit or None))
+    print("edges checked      " + ", ".join(f"{k}={v}" for k, v in sorted(edges_checked.items())))
     label_problems, labelled = check_labels(args.dump, args.limit)
     print(f"hidden_truth       {labelled} labelled records")
 
     failures = []
     if candidates:
         failures.append(f"{sum(candidates.values())} candidate/prompt problems: {dict(candidates)}")
+    if edge_problems:
+        failures.append(f"{sum(edge_problems.values())} unresolved edges: {dict(edge_problems)}")
     if stats.records == 0:
         failures.append("dump is empty")
     if stats.unaddressable:
@@ -808,7 +884,8 @@ def main() -> int:
             print(f"FAIL {f}", file=sys.stderr)
         return 1
 
-    print("\nOK schema, history reconstruction, leak boundary, token layout, candidates/prompt, label usability"
+    print("\nOK schema, history reconstruction, leak boundary, token layout, candidates/prompt, edges resolve,"
+          " label usability"
           + (", hidden_truth" if labelled else ""))
     return 0
 

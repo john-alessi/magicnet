@@ -114,8 +114,19 @@ public final class Serializer {
      * {@code mana_color}/{@code mana_amount}/{@code restricted}/{@code snow}/
      * {@code rider}. Vocabularies grew; no existing field changed meaning,
      * but a schema-16 reader would misread the new kind as unknown.
+     * 18: non-mana cost parts, optional/additional costs, combination mana.
+     * 19: a spell on the stack (cast, copied, or still being cast) is its
+     * card's {@code game_object} token in zone {@code stack} (no stack_item,
+     * no {@code source_is}; {@code side}, {@code stack_depth}, {@code casting},
+     * {@code copy}, {@code modes}, {@code target_i} edges); abilities stay
+     * {@code stack_item} with {@code side}, {@code stack_depth}, {@code ability},
+     * {@code modes} and {@code target_i} edges instead of
+     * {@code targeting}/{@code targeting_spell} (no {@code is_spell}); every
+     * state edge resolves to a token or tracking handle of the record or is
+     * absent; prompts asked while a spell is cast point {@code stack_object}
+     * at its card token.
      */
-    public static final int SCHEMA = 18;
+    public static final int SCHEMA = 20;
 
     /** A priority decision: which spell or ability to play. */
     public static final String KIND_ABILITY = "ability";
@@ -173,6 +184,16 @@ public final class Serializer {
         DECISION.set(0);
         emitted.clear();
         pendingTruth.clear();
+    }
+
+    /** The next game is numbered {@code first} (a harness restarted mid-list continues the count). */
+    public static synchronized void setFirstGameIndex(int first) {
+        GAME.set(first - 1);
+    }
+
+    /** Records written so far in this process. */
+    public static long written() {
+        return WRITTEN.get();
     }
 
     /** Index of the game currently being played. */
@@ -593,6 +614,12 @@ public final class Serializer {
             return this;
         }
 
+        /** Schema 20 (announce): what is being announced, e.g. "X". */
+        public Prompt announce(String what) {
+            tok.p("announce", what == null || what.isBlank() ? null : what);
+            return this;
+        }
+
         public Prompt optional(boolean v) {
             tok.flag("optional", v);
             return this;
@@ -754,7 +781,6 @@ public final class Serializer {
      */
     static final class Resolver {
         private final java.util.Map<String, StateExtractor.Tok> byId = new java.util.HashMap<>();
-        private final java.util.Map<Integer, StateExtractor.Tok> spellOnStack = new java.util.HashMap<>();
         private final java.util.Map<String, StateExtractor.Tok> selfLib = new java.util.HashMap<>();
         private final Game game;
         private final Player viewer;
@@ -765,9 +791,6 @@ public final class Serializer {
             for (int i = Math.max(0, from); tokens != null && i < tokens.size(); i++) {
                 StateExtractor.Tok t = tokens.get(i);
                 Object id = t.props.get("id");
-                if ("stack_item".equals(t.type) && t.spellCard >= 0) {
-                    spellOnStack.put(t.spellCard, t);
-                }
                 if (id == null) {
                     continue;
                 }
@@ -806,9 +829,6 @@ public final class Serializer {
                     if (z == null) {
                         return null;
                     }
-                    if (z.getZoneType() == forge.game.zone.ZoneType.Stack) {
-                        return spellOnStack.get(c.getId());
-                    }
                     if (z.getZoneType() == forge.game.zone.ZoneType.Library && viewer != null
                             && viewer.equals(z.getPlayer())) {
                         return selfLib.get(c.getName());
@@ -824,23 +844,18 @@ public final class Serializer {
             return null;
         }
 
-        /** The stack item of an ability being resolved or waiting on the stack. */
+        /**
+         * The token of a spell or ability being resolved or waiting on the
+         * stack: an ability's {@code stack_item}, a spell's card token in zone
+         * {@code stack} (schema 19), including a spell still being cast (its
+         * card is in the Stack zone before its stack instance exists).
+         */
         private StateExtractor.Tok stackToken(SpellAbility sa) {
             if (game == null) {
                 return null;
             }
-            SpellAbility root = sa.getRootAbility();
-            for (forge.game.spellability.SpellAbilityStackInstance si : game.getStack()) {
-                SpellAbility s = si.getSpellAbility();
-                if (s == sa || s == root || (s != null && root != null && s.getId() == root.getId())) {
-                    return byId.get("s" + si.getId());
-                }
-                if (s instanceof forge.game.trigger.WrappedAbility
-                        && ((forge.game.trigger.WrappedAbility) s).getWrappedAbility() == root) {
-                    return byId.get("s" + si.getId());
-                }
-            }
-            return null;
+            String ref = StateExtractor.stackRef(sa, game);
+            return ref == null ? null : byId.get(ref);
         }
     }
 
@@ -1018,7 +1033,7 @@ public final class Serializer {
                 int passIndex = pool == null ? 0 : pool.size();
                 sb.append(",\"chosen\":").append(passIndex).append(",\"chosen_match\":\"pass\"");
             } else {
-                int idx = indexOf(pool, pick);
+                int idx = poolIndex(pool, pick);
                 String how = idx < 0 ? "absent" : (pool.get(idx) == pick ? "identity" : "signature");
                 if (idx < 0) {
                     UNADDRESSABLE.incrementAndGet();
@@ -1043,7 +1058,7 @@ public final class Serializer {
      * of the time (6.9% on pio_41), so identity alone would spuriously report the
      * action as unaddressable.
      */
-    private static int indexOf(List<SpellAbility> pool, SpellAbility pick) {
+    static int poolIndex(List<SpellAbility> pool, SpellAbility pick) {
         if (pool == null || pick == null) {
             return -1;
         }

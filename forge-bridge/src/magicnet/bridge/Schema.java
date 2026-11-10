@@ -129,6 +129,10 @@ public final class Schema {
      * directions are separate ids, emitted explicitly rather than inferred.
      */
     public static final String SOURCE_IS = "source_is";
+    /**
+     * No longer emitted since schema 19 (stack targets are {@link #targetSlot}
+     * edges); kept so indices do not shift.
+     */
     public static final String TARGETING = "targeting";
     public static final String TARGETING_SPELL = "targeting_spell";
     public static final String ATTACKS = "attacks";
@@ -288,7 +292,9 @@ public final class Schema {
             "pay_mana", "pay_convoke", "pay_delve",
             // schema 18: non-mana cost parts, optional costs, combination mana
             "pay_sacrifice", "pay_discard", "pay_exile", "pay_tap", "pay_untap", "pay_return",
-            "pay_reveal", "choose_optional_cost", "choose_additional_cost", "pay_mana_combo"));
+            "pay_reveal", "choose_optional_cost", "choose_additional_cost", "pay_mana_combo",
+            // schema 20: announceRequirements (X)
+            "announce"));
 
     /**
      * Schema 17. {@code mana_color} of a payment option (vocab {@code mana_color}):

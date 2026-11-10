@@ -7,6 +7,7 @@ from torch.profiler import profile, record_function, ProfilerActivity
 import time
 from magicnet.network.constants import EXTERNAL_EMBEDDING_PCA_DIM
 
+torch.manual_seed(42)
 torch.set_default_device('cpu')
 #torch.set_default_device('cuda' if torch.cuda.is_available() else 'cpu')
 #torch.set_float32_matmul_precision("high")

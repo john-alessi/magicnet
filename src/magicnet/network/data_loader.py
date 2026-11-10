@@ -176,11 +176,11 @@ class DataLoader():
     def get_embedding_lookup(self, keys: list[str], strings: list[str], return_diff_only=True):
         offset = len(self.vector_lookup)
         keys_to_embed = [k for k in keys if k not in self.vector_lookup]
-        key_embeddings = dict(zip(keys, self.catalog.key_vectors(keys_to_embed))) if keys_to_embed else {}
+        key_embeddings = dict(zip(keys_to_embed, self.catalog.key_vectors(keys_to_embed))) if keys_to_embed else {}
         self.vector_lookup |= key_embeddings
 
         strings_to_embed = [s for s in strings if s not in self.vector_lookup]
-        string_embeddings = dict(zip(strings, self.catalog.embed_strings(strings_to_embed))) if strings_to_embed else {}
+        string_embeddings = dict(zip(strings_to_embed, self.catalog.embed_strings(strings_to_embed))) if strings_to_embed else {}
         self.vector_lookup |= string_embeddings
 
         id_list = list(self.vector_lookup)

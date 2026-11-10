@@ -1776,6 +1776,16 @@ final class ManaPayment {
         return model(enumerate(me, sa, ex), null, 0);
     }
 
+    /**
+     * Whether {@code m} can be paid for {@code sa} from scratch: the payment
+     * mask ({@link #feasible}) on an empty prefix, over every source the
+     * payer has now (floating mana, mana abilities, life for Phyrexian
+     * shards). Used by {@link PlayFilter} before anything is announced.
+     */
+    static boolean affordable(Player me, SpellAbility sa, ManaCostBeingPaid m) {
+        return feasible(m, manaModel(me, sa, java.util.Collections.emptyList()), lifeShards(me, sa, m, 0, false));
+    }
+
     private static String shardText(ManaCostShard sh) {
         return sh == ManaCostShard.GENERIC ? "{1}" : sh.toString();
     }

@@ -34,9 +34,13 @@ class PolicyHead(torch.nn.Module):
         batch_dim = game_state['decode_batch_dim']
         prompt_tokens = policy_state[torch.arange(batch_dim[0]), game_state['prompt_token_indices']]
         candidates = policy_state.new_zeros(batch_dim)
-        candidates_mask = torch.zeros(batch_dim[0], batch_dim[1], dtype=torch.bool)
-        candidates[game_state['action_refs'][:,0], game_state['action_refs'][:,2]] = policy_state[game_state['action_refs'][:,0], game_state['action_refs'][:,1]]
-        candidates[game_state['action_decode_indices'][:,0], game_state['action_decode_indices'][:,1]] = decisions[game_state['action_decode_indices'][:,0], game_state['action_decode_indices'][:,1]]
-        candidates_mask[game_state['action_refs'][:,0], game_state['action_refs'][:,2]] = True
-        candidates_mask[game_state['action_decode_indices'][:,0], game_state['action_decode_indices'][:,1]] = True
+        candidates_mask = torch.ones(batch_dim[0], batch_dim[1], dtype=torch.bool)
+        
+        if game_state['action_refs'].numel() > 0:
+            candidates[game_state['action_refs'][:,0], game_state['action_refs'][:,2]] = policy_state[game_state['action_refs'][:,0], game_state['action_refs'][:,1]]
+            candidates_mask[game_state['action_refs'][:,0], game_state['action_refs'][:,2]] = False
+        if game_state['action_decode_indices'].numel() > 0:
+            candidates[game_state['action_decode_indices'][:,0], game_state['action_decode_indices'][:,1]] = decisions[game_state['action_decode_indices'][:,0], game_state['action_decode_indices'][:,1]]
+            candidates_mask[game_state['action_decode_indices'][:,0], game_state['action_decode_indices'][:,1]] = False
+
         return self.pointer_network(candidates, candidates_mask, prompt_tokens)

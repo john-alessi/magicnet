@@ -33,6 +33,7 @@ optimising it; swapping in a binary codec later changes only this file and
 from __future__ import annotations
 
 import json
+import torch
 import random
 import socketserver
 from dataclasses import dataclass, field
@@ -67,12 +68,10 @@ class LearnedPolicy:
 
     def __init__(
         self,
-        catalog: CatalogClient,
         seed: int,
         model: MagicNet,
         data_loader: DataLoader
     ) -> None:
-        self.catalog = catalog
         self.seed = seed
         self.model = model
         self._rng = random.Random(self.seed)
@@ -82,18 +81,18 @@ class LearnedPolicy:
         pass
 
     def act(self, decision: Decision) -> int:
-        game_state = self.data_loader(
+        game_state = self.data_loader.load_game(
             [{
                 'state': decision.state + [decision.prompt],
                 'history': decision.history,
                 'actions': decision.actions,
             }],
-            self.catalog,
         )
-        _, selected_action = self.model(game_state)
-        self.decisions += 1
-        selected_action = self._rng.randrange(len(decision.actions))
-        return selected_action
+        with torch.inference_mode():
+            _, action_logits = self.model(game_state)
+            selected_action = torch.argmax(action_logits,dim=1)[0].item()
+            self.decisions += 1
+            return selected_action
 
 @dataclass
 class RandomPolicy:

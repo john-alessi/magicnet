@@ -71,6 +71,20 @@ public class InstrumentedController extends GeneratedController {
 
     private static final String TARGET_MODE = targetMode();
 
+    /**
+     * Schema 19: drop unplayable abilities and spells from the priority
+     * candidate list ({@link PlayFilter}). {@code -Dmagicnet.filter=true|false};
+     * default on whenever an external source decides (a policy is never offered
+     * what the engine would refuse), off for AI-only runs so their dumps keep
+     * Forge's unfiltered pool unless asked. Initialised after ACTIONS.
+     */
+    static final boolean FILTER = filterEnabled();
+
+    private static boolean filterEnabled() {
+        String p = System.getProperty("magicnet.filter");
+        return p != null ? Boolean.parseBoolean(p) : ACTIONS.decides();
+    }
+
     private static final java.util.concurrent.atomic.AtomicInteger DIFF_TICK =
             new java.util.concurrent.atomic.AtomicInteger();
 
@@ -169,6 +183,7 @@ public class InstrumentedController extends GeneratedController {
         long t0 = System.nanoTime();
         int candidates = -1;
         List<SpellAbility> pool = null;
+        List<SpellAbility> unfiltered = null;
         if (ENUMERATE) {
             try {
                 Game game = getGame();
@@ -197,6 +212,11 @@ public class InstrumentedController extends GeneratedController {
                 }
             } catch (Throwable ignored) {
                 // Enumeration is best-effort instrumentation; never fail a game over it.
+            }
+            if (FILTER && pool != null) {
+                unfiltered = pool;
+                pool = PlayFilter.filter(pool, getPlayer());
+                lastPool = pool;
             }
         }
 
@@ -304,6 +324,14 @@ public class InstrumentedController extends GeneratedController {
                 return chosen;
             }
             chosen = super.chooseSpellAbilityToPlay();
+            if (unfiltered != null && chosen != null && !chosen.isEmpty() && chosen.get(0) != null) {
+                // Observe mode: did the filter hide what Forge's AI plays?
+                if (Serializer.poolIndex(pool, chosen.get(0)) >= 0) {
+                    PlayFilter.recordKept();
+                } else if (Serializer.poolIndex(unfiltered, chosen.get(0)) >= 0) {
+                    PlayFilter.recordHidden(chosen.get(0), getPlayer());
+                }
+            }
             return chosen;
         } finally {
             auditFilterSoundness(chosen);
@@ -1016,7 +1044,18 @@ public class InstrumentedController extends GeneratedController {
         try {
             if (!"engine".equals(TARGET_MODE) || sa == null) {
                 boolean skipBefore = sa != null && sa.isSkip();
-                boolean r = playObservedOrAi(sa);
+                boolean announce = sa != null && routeChoices() && !ACTIONS.decides() && Serializer.enabled();
+                if (announce) {
+                    Announce.observeBegin(this, sa);
+                }
+                boolean r;
+                try {
+                    r = playObservedOrAi(sa);
+                } finally {
+                    if (announce) {
+                        Announce.observeEnd(sa);
+                    }
+                }
                 outcome = aiOutcome(sa, skipBefore);
                 return r;
             }
@@ -1113,6 +1152,15 @@ public class InstrumentedController extends GeneratedController {
         GameHistory.Attempt attempt = GameHistory.currentAttempt();
         if (attempt != null) {
             attempt.reach("announce", sa);
+        }
+        if (sa != null && routeChoices() && ACTIONS.decides()) {
+            Integer routed = Announce.decide(this, sa, min, max, announce);
+            if (routed != null) {
+                if (attempt != null && attempt.owns(sa)) {
+                    attempt.announce(announce, routed);
+                }
+                return routed;
+            }
         }
         Integer v = super.announceRequirements(sa, min, max, announce);
         if (!"engine".equals(TARGET_MODE)) {

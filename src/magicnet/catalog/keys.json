@@ -138,9 +138,10 @@
       "value_kind": "string",
       "token_types": [
         "player",
-        "game_object"
+        "game_object",
+        "stack_item"
       ],
-      "notes": "\"self\" or \"opp\". On a phantom (schema 13): whose object it was (controller)."
+      "notes": "\"self\" or \"opp\". On a phantom (schema 13): whose object it was (controller). Schema 19, on a spell (game_object in zone stack) or an ability (stack_item) on the stack: whose spell/ability it is (controller / activating player) -- the stack is one shared zone, so the zone does not say."
     },
     {
       "key": "life",
@@ -191,7 +192,7 @@
         "game_object",
         "history"
       ],
-      "notes": "On history (move events): the object was face down when it moved; public."
+      "notes": "On history (move events): the object was face down when it moved; public. Schema 19: also on a spell cast face down on the stack (morph, disguise); nameless unless the viewer controls it."
     },
     {
       "key": "phased_out",
@@ -361,7 +362,7 @@
         "game_object",
         "history"
       ],
-      "notes": "On history (cast/copy_spell): X announced for the spell."
+      "notes": "On history (cast/copy_spell): X announced for the spell. Schema 19: also on a spell on the stack (game_object in zone stack)."
     },
     {
       "key": "kicked",
@@ -371,7 +372,7 @@
         "game_object",
         "history"
       ],
-      "notes": "On history (cast/copy_spell): the spell was kicked."
+      "notes": "On history (cast/copy_spell): the spell was kicked. Schema 19: also on a spell on the stack (game_object in zone stack)."
     },
     {
       "key": "blocked",
@@ -448,7 +449,8 @@
       "value_kind": "flag",
       "token_types": [
         "stack_item"
-      ]
+      ],
+      "notes": "No longer emitted since schema 19: a spell on the stack is its card's game_object (zone stack); every stack_item is an ability."
     },
     {
       "key": "is_trigger",
@@ -461,6 +463,34 @@
       "notes": "On an ability phantom (schema 13): the ability that left the stack was a trigger."
     },
     {
+      "key": "stack_depth",
+      "description": "position on the stack, counted from the top",
+      "value_kind": "number",
+      "token_types": [
+        "game_object",
+        "stack_item"
+      ],
+      "notes": "Schema 19, spells (game_object in zone stack) and abilities (stack_item): 0 = top of the stack (resolves next). A spell still being cast (casting) counts as the top, every stack instance below it one deeper: the depth it will have once cast."
+    },
+    {
+      "key": "casting",
+      "description": "this spell is being cast and is not on the stack yet",
+      "value_kind": "flag",
+      "token_types": [
+        "game_object"
+      ],
+      "notes": "Schema 19: a card Forge has moved to the Stack zone during casting (modes, targets, costs, payment) before its stack instance exists. Also a card left in the Stack zone by a refused cast on Forge's AI path (failed_unrolled)."
+    },
+    {
+      "key": "copy",
+      "description": "this spell is a copy",
+      "value_kind": "flag",
+      "token_types": [
+        "game_object"
+      ],
+      "notes": "Schema 19, on a spell on the stack: a copy of a spell (not a card); it ceases to exist when it leaves the stack."
+    },
+    {
       "key": "source",
       "description": "source card",
       "value_kind": "ref",
@@ -468,7 +498,7 @@
         "stack_item",
         "delayed_trigger"
       ],
-      "notes": "Card name of a stack item / delayed trigger. Redundant with their source_is edge. Not on history since schema 13 (role edge source_is); not on options since schema 16 (source_is edge)."
+      "notes": "Card name of a stack item / delayed trigger. Redundant with their source_is edge. Not on history since schema 13 (role edge source_is); not on options since schema 16 (source_is edge). Schema 19: abilities only (a spell on the stack is its own card's game_object); absent, with source_oracle_id, when the source is face down and the viewer may not look at it."
     },
     {
       "key": "source_oracle_id",
@@ -584,9 +614,11 @@
       "description": "modes chosen for the spell",
       "value_kind": "string_list",
       "token_types": [
-        "history"
+        "history",
+        "game_object",
+        "stack_item"
       ],
-      "notes": "Schema 13 cast/copy_spell/trigger: chosen mode texts, in choice order."
+      "notes": "Schema 13 cast/copy_spell/trigger: chosen mode texts, in choice order. Schema 19, on a spell (game_object in zone stack, also while being cast) or an ability (stack_item) on the stack: the modes chosen for it."
     },
     {
       "key": "mana_spent_W",
@@ -743,9 +775,10 @@
         "history",
         "game_object",
         "action",
-        "decision"
+        "decision",
+        "stack_item"
       ],
-      "notes": "On history (activate, trigger): the ability's rules text (Forge description, object ids removed); unbounded vocabulary. On an ability phantom (schema 13): the text of the ability that left the stack. Schema 16, on an option token: the ability's normalized rules text (host's own name -> this creature/permanent/spell, no ids, bracketed context or player names; never empty) for cast/activate/play_land/confirm/mode/order_next. On the prompt: the asking ability's text when it has no token (its stack_object edge does not resolve). Schema 17: on an activate_mana option, the mana ability's text (riders such as Cavern of Souls' \"can't be countered\" are part of it)."
+      "notes": "On history (activate, trigger): the ability's rules text (Forge description, object ids removed); unbounded vocabulary. On an ability phantom (schema 13): the text of the ability that left the stack. Schema 16, on an option token: the ability's normalized rules text (host's own name -> this creature/permanent/spell, no ids, bracketed context or player names; never empty) for cast/activate/play_land/confirm/mode/order_next. On the prompt: the asking ability's text when it has no token (its stack_object edge does not resolve). Schema 17: on an activate_mana option, the mana ability's text (riders such as Cavern of Souls' \"can't be countered\" are part of it). Schema 19, on a stack_item: the ability's rules text, normalized as on option tokens (the host's own name as \"this creature/permanent/spell\")."
     },
     {
       "key": "amount",
@@ -803,7 +836,7 @@
         "record",
         "decision"
       ],
-      "notes": "\"ability\" for priority, otherwise the routed callback (declare_attacker, ...); values magicnet.schema.DECISION_KINDS. Schema 16: also the prompt token's component. Schema 17: pay_mana, pay_convoke, pay_delve (-Dmagicnet.payment). Schema 18: pay_sacrifice, pay_discard, pay_exile, pay_tap, pay_untap, pay_return, pay_reveal, choose_optional_cost, choose_additional_cost, pay_mana_combo."
+      "notes": "\"ability\" for priority, otherwise the routed callback (declare_attacker, ...); values magicnet.schema.DECISION_KINDS. Schema 16: also the prompt token's component. Schema 17: pay_mana, pay_convoke, pay_delve (-Dmagicnet.payment). Schema 18: pay_sacrifice, pay_discard, pay_exile, pay_tap, pay_untap, pay_return, pay_reveal, choose_optional_cost, choose_additional_cost, pay_mana_combo. Schema 20: announce (X and other announced values, -Dmagicnet.choices)."
     },
     {
       "key": "mana_ability",
@@ -831,7 +864,16 @@
       "token_types": [
         "action"
       ],
-      "notes": "Schema 16: option token of a choose_number decision. Schema 18: on an optional_cost option of a multikicker/replicate/squad decision, how many times the cost is paid."
+      "notes": "Schema 16: option token of a choose_number decision. Schema 20: of an announce decision (the announced X). Schema 18: on an optional_cost option of a multikicker/replicate/squad decision, how many times the cost is paid."
+    },
+    {
+      "key": "announce",
+      "description": "what value is being announced",
+      "value_kind": "string",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 20: prompt of an announce decision (announceRequirements): the announced variable, \"X\" for an X cost."
     },
     {
       "key": "prompt_text",
@@ -849,7 +891,7 @@
       "token_types": [
         "decision"
       ],
-      "notes": "Schema 16: minimum targets (choose_target), modes (choose_mode) or number (choose_number)."
+      "notes": "Schema 16: minimum targets (choose_target), modes (choose_mode) or number (choose_number). Schema 20: smallest value an announce decision allows."
     },
     {
       "key": "max",
@@ -858,7 +900,7 @@
       "token_types": [
         "decision"
       ],
-      "notes": "Schema 16: maximum targets, modes or number."
+      "notes": "Schema 16: maximum targets, modes or number. Schema 20: on an announce decision, the largest value offered (the engine bound capped at the largest affordable X)."
     },
     {
       "key": "optional",

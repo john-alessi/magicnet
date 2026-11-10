@@ -79,6 +79,20 @@ public final class StateStats {
         EFFECT_EDGES[3]++;
     }
 
+    /**
+     * Schema 19: state edges whose target has no token in the viewer's state,
+     * by relation and how they were settled: "handle" (rewritten to the tracking
+     * handle of the referenced card) or "dropped" (no token and no handle: the
+     * viewer cannot identify the referent, so the edge is absent).
+     */
+    private static final Map<String, java.util.concurrent.atomic.AtomicLong> EDGE_FIXUPS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    public static void recordEdgeFixup(String how, String rel) {
+        EDGE_FIXUPS.computeIfAbsent(how + " " + rel, k -> new java.util.concurrent.atomic.AtomicLong())
+                .incrementAndGet();
+    }
+
     public static void recordUncompressedLibrary(int n) {
         UNCOMPRESSED_LIB.add(n);
     }
@@ -275,6 +289,11 @@ public final class StateStats {
                     + "with a static-id-0 P/T boost: %d, of which with a resolve edge: %d%n",
                     EFFECT_EDGES[3], EFFECT_EDGES[2], EFFECT_EDGES[0], EFFECT_EDGES[1]);
         }
+        System.out.println("\n=== state edges without a direct token (schema 19) ===");
+        if (EDGE_FIXUPS.isEmpty()) {
+            System.out.println("  none");
+        }
+        new java.util.TreeMap<>(EDGE_FIXUPS).forEach((k, v) -> System.out.printf("  %-36s %d%n", k, v.get()));
         if (TOTALS.isEmpty()) {
             System.out.println("\n=== token stats: no states recorded "
                     + "(enable with -Dmagicnet.tokens=1) ===");

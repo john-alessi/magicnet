@@ -377,6 +377,11 @@ def test_layout_flags_misplaced_keys_false_flags_and_object_ids() -> None:
     }
 
 
+def test_layout_flags_an_empty_name() -> None:
+    face_down = _bf("c3", "", face_down=True)
+    assert validate_dump.check_layout([face_down, _bf("c4", "Bear")]) == {"empty string: game_object.name": 1}
+
+
 def test_layout_flags_forge_run_context_in_strings() -> None:
     old_style = _H().ev("trigger", ability="Whenever an opponent draws a card, they lose 2 life. "
                                             "[Player: P1-[Test] History Midrange B]")
@@ -543,3 +548,60 @@ def test_option_text_must_not_carry_a_deck_name() -> None:
     assert validate_dump.check_layout([clean], forbidden=forbidden) == {}
     assert validate_dump.check_layout([leaky], forbidden=forbidden) == {
         "player/deck name in string component: action.ability": 1}
+
+
+# ---- schema 19: every edge resolves ------------------------------------------
+
+def test_every_edge_must_resolve_to_a_token_of_the_record() -> None:
+    spell = _nest({"type": "game_object", "zone": "stack", "id": "c4", "name": "Shock", "side": "opp",
+                   "stack_depth": 0})
+    spell["edges"] = [{"rel": "target_0", "to": "h1"}]
+    ability = {"type": "stack_item", "zone": "stack", "id": "s2",
+               "edges": [{"rel": "source_is", "to": "c4"}], "components": {"stack_depth": 1}}
+    ok = _decision([SELF, BEAR, spell, ability], [_option(0, "confirm", {"source_is": "h1"})],
+                   prompt_edges={"stack_object": "c4"})
+    assert validate_dump.check_edges([ok])[0] == {}
+    # A raw card ref with no token: an ability whose source left play, unsettled.
+    orphan = dict(ability, edges=[{"rel": "source_is", "to": "c77"}])
+    bad = _decision([SELF, BEAR, spell, orphan], [_option(0, "confirm", {"source_is": "c78"})],
+                    prompt_edges={"stack_object": "s9"})
+    assert validate_dump.check_edges([bad])[0] == {
+        "unresolved state edge stack_item.source_is": 1,
+        "unresolved prompt edge decision.stack_object": 1,
+        "unresolved option edge action.source_is": 1,
+    }
+
+
+def test_a_face_down_opponent_spell_or_permanent_is_nameless(tmp_path: Path) -> None:
+    morph = _nest({"type": "game_object", "zone": "stack", "id": "c3", "name": "Willbender", "side": "opp",
+                   "face_down": True, "stack_depth": 0})
+    own = dict(morph, components={**morph["components"], "side": "self"})
+    assert _leaks(tmp_path, [([], [SELF, own])]) == {}
+    assert _leaks(tmp_path, [([], [SELF, morph])]) == {"named face-down opponent object in stack": 1}
+    assert _leaks(tmp_path, [([], [SELF, _bf("c4", "Willbender", face_down=True)])]) == {
+        "named face-down opponent object in opp_battlefield": 1}
+
+
+# ---- own effect looking at the opponent's library (Portent) ------------------------
+
+def test_opponent_library_cards_shown_by_own_effect_may_be_named(tmp_path: Path) -> None:
+    def top(name: str, h: str) -> dict:
+        return _with(_nest({"type": "library_card", "zone": "opp_library", "id": f"c{h[1:]}", "name": name,
+                            "count": 1, "depth_from_top": 0}), h)
+
+    def portent(h: _H, actor: str) -> list[dict]:
+        cast = h.ev("cast", {"actor": actor}, step=1)
+        resolve = h.ev("resolve", {"actor": actor, "cause": cast["id"]}, step=2)
+        return [cast, resolve, h.ev("move_zone", {"obj": "h7", "player": "p1", "cause": resolve["id"]}, step=2,
+                                    **{"from": "opp_library", "to": "opp_library", "move_kind": "put"})]
+
+    h = _H()
+    assert _leaks(tmp_path, [(portent(h, "p0"), [SELF, top("Seal of Cleansing", "h7")])]) == {}
+    h = _H()
+    assert _leaks(tmp_path, [(portent(h, "p1"), [SELF, top("Seal of Cleansing", "h7")])]) == {
+        "unseen card identified in history (opp_library -> opp_library)": 1,
+        "unredacted name in opp_library: Seal of Cleansing": 1}
+    h = _H()
+    shuffled = portent(h, "p0") + [h.ev("shuffle", {"player": "p1"}, step=3)]
+    assert _leaks(tmp_path, [(shuffled, [SELF, top("Seal of Cleansing", "h7")])]) == {
+        "unredacted name in opp_library: Seal of Cleansing": 1}

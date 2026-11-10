@@ -6,13 +6,21 @@ class PointerAttention(torch.nn.Module):
         self
     ):
         super().__init__()
-        self.ln = torch.nn.LayerNorm(TOKEN_DIM)
-        self.q = torch.nn.Linear(TOKEN_DIM, TOKEN_DIM)
-        self.k = torch.nn.Linear(TOKEN_DIM, TOKEN_DIM)
+        self.glimpse = torch.nn.MultiheadAttention(TOKEN_DIM, POINTER_GLIMPSE_HEADS, batch_first=True)
+        self.q_ln = torch.nn.LayerNorm(TOKEN_DIM)
+        self.k_ln = torch.nn.LayerNorm(TOKEN_DIM)
+        self.wq = torch.nn.Linear(TOKEN_DIM, TOKEN_DIM)
+        self.wk = torch.nn.Linear(TOKEN_DIM, TOKEN_DIM)
 
     def forward(self, candidates: torch.Tensor, mask: torch.Tensor, prompt_tokens: torch.Tensor):
-        breakpoint()
-        return torch.zeros(candidates.shape[0], candidates.shape[1])
+        can = self.k_ln(candidates)
+        pro = self.q_ln(prompt_tokens)
+        q,_ = self.glimpse(pro[:, None], can, can, key_padding_mask=mask, need_weights=False)
+        q = self.wq(q[:,0])
+        k = self.wk(can)
+        logits = torch.einsum('nd,nld->nl', q, k) / (TOKEN_DIM ** 0.5)
+        logits = POINTER_TANH_CLIP * torch.tanh(logits)
+        return logits.masked_fill(mask, float('-inf'))
 
 class PooledAttention(torch.nn.Module):
     def __init__(

@@ -38,5 +38,4 @@ class MagicNet(torch.nn.Module):
 
         choice_logits = self.policy_head(game_state, policy_state, policy_mask, decisions, decisions_mask)
         value_logits = self.value_head(policy_state, game_state['global_token_indices'])
-        breakpoint()
         return value_logits, choice_logits

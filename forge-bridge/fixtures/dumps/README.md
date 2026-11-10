@@ -8,7 +8,9 @@ and must be regenerated after a schema bump.
 12 AI-vs-AI games, Mono-Red Prowess mirror (`fixtures/pio_mrp`), seed 7,
 combat and choice routing on, mana payment routing **off** (no
 `-Dmagicnet.payment`, so no `pay_*`, `choose_optional_cost`, `choose_additional_cost` records and
-the picks below keep their decision numbers), **schema 18**, **with
+the picks below keep their decision numbers), priority candidate filter
+**off** (the default for AI-only runs; no `-Dmagicnet.filter`, so `actions`
+is Forge's unfiltered pool), **schema 20**, **with
 hidden-information labels** (model inputs under each token's
 `components`; read them with `magicnet.dump.comp(tok, key)`; abilities as the
 `gained`/`lost` difference from the printed card, plus `base_power`/`base_toughness`;
@@ -61,7 +63,22 @@ and labels): only `prompt`/`actions` changed, plus `n:<name>` ids on the
 viewer's own-library name aggregates. Regenerated at schema 17 with payment
 routing off: byte-identical to the schema-16 dump except the `schema` field.
 Regenerated at schema 18 (non-mana cost routing, same flags): byte-identical
-to the schema-17 dump except the `schema` field.
+to the schema-17 dump except the `schema` field. Regenerated at schema 19
+(same flags, same 3456 records, identical games, history, actions, prompts and
+labels): only `state` changed, in the 543 records with something on the stack
+-- a spell on the stack is now its card's `game_object` in zone `stack`
+(`side`, `stack_depth`, `target_i` edges), abilities stay `stack_item` with
+`side`, `stack_depth`, `ability` and `target_i` edges (see
+`forge-bridge/README.md`, "The stack"). Every edge in the dump resolves to a
+token of its record. The picks below are unchanged (none has anything on the
+stack); game 0 decision 163 is added as a stack example. Regenerated at
+schema 20 (`announce` decisions, own face-down cards named; same flags):
+byte-identical to the schema-19 dump except the `schema` field -- the deck
+has no X spells or face-down cards -- so the picks are unchanged.
+Regenerated once more with the final schema-20 build (reproducible: two runs
+are byte-identical): same 3456 records; only game 0 decisions 237-245 list
+Emberheart Challenger's `affects`/`affected_by` edges in a different order
+(edge order carries no meaning; identical after sorting edges).
 
 | game | decision | viewer | turn | why |
 |---|---|---|---|---|
@@ -70,3 +87,4 @@ to the schema-17 dump except the `schema` field.
 | 3 | 279 | P1 | 11 | same board after blocks: a Mutavault blocking an attacking Screaming Nemesis (`blocking`/`blocked_by` edges, `blocked` true) |
 | 0 | 242 | P0 | 9 | own Emberheart Challenger 6/4 (base 2/2): tapped, Monster Role, `gained` Trample, `affected_by` its prowess resolve and Monstrous Rage (no counters) |
 | 5 | 297 | P1 | 12 | own Soul-Scar Mage 6/5 `affected_by` two prowess resolves and Monstrous Rage, Monster Role; four attackers, three blockers declared |
+| 0 | 163 | P1 | 7 | the stack: the opponent's Burst Lightning (`game_object`, zone `stack`, `side` opp, `stack_depth` 2, `target_0` -> own Soul-Scar Mage) under two opponent prowess triggers (`stack_item`, `stack_depth` 0 and 1, `source_is` their creatures) |

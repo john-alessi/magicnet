@@ -26,7 +26,10 @@ class DecisionEncoder(torch.nn.Module):
             batches, mask = None, None
         else:
             tokens = self.action_encoder(game_state['actions'], emb_cache)
-            edge_emb, edge_pairs = self.relation_encoder(game_state['action_edges'])
+            if len(game_state['action_edges']) > 0:
+                edge_emb, edge_pairs = self.relation_encoder(game_state['action_edges'])
+            else:
+                edge_emb, edge_pairs = None, None
             batches, mask = batch_tokens(tokens, game_state['decode_batch_indices'], game_state['decode_batch_dim'])
             for attn in self.transformer_blocks:
                 batches = attn(batches, mask, policy_state, policy_mask, edge_emb, edge_pairs)

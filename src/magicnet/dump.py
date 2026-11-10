@@ -113,7 +113,9 @@ Each candidate is one of:
   and ``choose_additional_cost`` offer ``optional_cost`` (``cost``,
   ``ability``, ``value``); ``pay_mana_combo`` offers ``choose_color``
   (``mana_color``); ``pay_convoke`` may offer ``waterbend``. See
-  forge-bridge/README.md, "Mana payment" and "Non-mana costs".
+  forge-bridge/README.md, "Mana payment" and "Non-mana costs". Schema 20:
+  ``announce`` (the value of X) offers ``number`` options (``value``); its
+  prompt carries ``announce`` ("X") and ``min``/``max``.
 
 The record's ``prompt`` is one ``{"type": "decision", "id": "q", ...}`` token:
 ``kind`` (``magicnet.schema.DECISION_KINDS``), ``prompt_text``, ``min``/
@@ -127,6 +129,24 @@ tokens in candidate order -- and :func:`resolve_candidates` maps each
 candidate to its index in that list. :func:`resolve_edges` on that list
 resolves prompt and option edges too.
 
+The stack (schema 19)
+---------------------
+A spell on the stack -- cast, copied (``copy``), or still being cast
+(``casting``: its card is in the Stack zone before it is paid for) -- is its
+card's ``game_object`` token in zone ``stack`` (id ``c<N>``, named unless
+face down and hidden from the viewer), with ``side`` (controller),
+``stack_depth`` (0 = top; a spell being cast is the top), the card's
+characteristics, ``x_paid``/``kicked``/``modes``, ``target_<i>`` edges and
+``owner_is`` when owner != controller. A ``stack_item`` is always an ability
+(``side``, ``stack_depth``, ``is_trigger``, ``ability``, ``source_is`` and
+``target_<i>`` edges). Prompts asked while a spell is cast point
+``stack_object``/``source_is`` at its card token.
+
+Since schema 19 every edge of a record (history, state, prompt, options)
+resolves to a token of that record through the id/handle table: the bridge
+rewrites a state edge to an object without a token to its tracking handle,
+or omits it. ``scripts/validate_dump.py`` enforces this.
+
 Ids are join keys, not features
 -------------------------------
 Token ``id`` properties exist only to resolve ``edges`` to token indices. They
@@ -137,10 +157,12 @@ them; callers building tensors must do both.
 
 from __future__ import annotations
 
+import glob
+import gzip
 import json
 import re
 from collections import defaultdict
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -148,7 +170,7 @@ from magicnet.schema import COMPONENTS
 
 # Bumped by the Java side on any change that alters the meaning of an existing
 # field. Refuse unknown schemas rather than silently misreading them.
-SUPPORTED_SCHEMA = 18
+SUPPORTED_SCHEMA = 20
 
 # ``verb`` of the explicit "pass priority" option token (schema 16). Present
 # (always last) only on decisions where passing is legal; there is no sentinel
@@ -364,8 +386,18 @@ class HistoryReassembler:
         )
 
 
+def open_text(path: str | Path):
+    """Open a dump for reading as text; ``.gz`` files (generator shards) are
+    decompressed on the fly."""
+    path = Path(path)
+    if path.suffix == ".gz":
+        return gzip.open(path, "rt", encoding="utf-8")
+    return path.open(encoding="utf-8")
+
+
 def load(path: str | Path) -> Iterator[Decision]:
-    """Stream decisions from a dump, reassembling delta-encoded history.
+    """Stream decisions from a dump (plain or ``.gz``), reassembling
+    delta-encoded history.
 
     Yields lazily so that dumps larger than memory can be processed; the only
     retained state is one running history per ``(game, viewer)``.
@@ -376,7 +408,7 @@ def load(path: str | Path) -> Iterator[Decision]:
     path = Path(path)
     reassembler = HistoryReassembler()
 
-    with path.open() as handle:
+    with open_text(path) as handle:
         for lineno, line in enumerate(handle, start=1):
             line = line.strip()
             if not line:
@@ -395,13 +427,37 @@ def load(path: str | Path) -> Iterator[Decision]:
             yield reassembler.absorb(rec, where=f"{path}:{lineno}")
 
 
+def load_many(paths: str | Path | Iterable[str | Path]) -> Iterator[Decision]:
+    """Stream decisions from several dumps in turn (e.g. the
+    ``shard_*.jsonl.gz`` files of ``scripts/generate_dumps.py``).
+
+    *paths* is one path, a glob pattern (``"out/shard_*.jsonl.gz"``), a
+    directory (its ``shard_*.jsonl.gz`` files) or an iterable of those;
+    patterns and directories expand in sorted order. Each file is read with
+    :func:`load`, so history is reassembled per file (game numbers restart
+    in every shard: key games by ``(path, game)``, see ``Decision.game``).
+    """
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    for p in paths:
+        p = Path(p)
+        if p.is_dir():
+            files = sorted(p.glob("shard_*.jsonl.gz"))
+        elif any(ch in str(p) for ch in "*?["):
+            files = [Path(f) for f in sorted(glob.glob(str(p)))]
+        else:
+            files = [p]
+        for f in files:
+            yield from load(f)
+
+
 def resolve_edges(tokens: list[dict]) -> list[list[tuple[str, int]]]:
     """Resolve each token's edges from id references to token indices.
 
     Returns one list of ``(relation, target_index)`` per token. Edges whose
-    target is not present are dropped rather than raising: a token can legally
-    reference something outside the viewer's information set, and silently
-    omitting an unseen referent is the correct redaction behaviour.
+    target is not present are dropped rather than raising. Since schema 19
+    the bridge writes none (``scripts/validate_dump.py`` fails on one), so a
+    drop here means a record from an older or broken writer.
     """
     # Schema 13: a tracking handle resolves to the one token it is assigned to.
     # Schema 16: works unchanged on decision_tokens() (prompt "q", options "a<i>").

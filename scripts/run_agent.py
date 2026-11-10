@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+import torch
 
 from magicnet.agent import LearnedPolicy, serve
 from magicnet.catalog import CatalogClient
 from magicnet.network.magicnet import MagicNet
+from magicnet.network.data_loader import DataLoader
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
@@ -40,9 +42,15 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    torch.manual_seed(42)
+    torch.set_default_device('cuda' if torch.cuda.is_available() else 'cpu')
+    torch.set_float32_matmul_precision("high")
+
     catalog = CatalogClient()
     model = MagicNet()
-    policy = LearnedPolicy(seed=args.seed, catalog=catalog, model=model)
+    model.eval()
+    data_loader = DataLoader(catalog)
+    policy = LearnedPolicy(seed=args.seed, model=model, data_loader=data_loader)
     server = serve(policy, args.host, args.port)
     print(f"agent listening on {args.host}:{args.port}", flush=True)
 
