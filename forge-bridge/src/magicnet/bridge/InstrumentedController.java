@@ -112,7 +112,7 @@ public class InstrumentedController extends GeneratedController {
      * reach the Game. Each viewer's listener subscribes independently, so both
      * see every event but redact it differently.
      */
-    private static java.util.List<StateExtractor.Tok> history(Game game, forge.game.player.Player viewer) {
+    static java.util.List<StateExtractor.Tok> history(Game game, forge.game.player.Player viewer) {
         synchronized (HISTORY_LOCK) {
             Integer key = viewer == null ? Integer.valueOf(-1) : Integer.valueOf(viewer.getId());
             // Schema 13: one hub per game builds the events; each viewer's
@@ -176,6 +176,7 @@ public class InstrumentedController extends GeneratedController {
                 CardCollection sources = ComputerUtilAbility.getAvailableCards(game, me);
                 List<SpellAbility> all = ComputerUtilAbility.getSpellAbilities(sources, me);
                 pool = all;
+                lastPool = all;
                 candidates = all == null ? 0 : all.size();
                 DecisionLog.recordPoolOrder(all);
                 if (all != null) {
@@ -565,7 +566,7 @@ public class InstrumentedController extends GeneratedController {
         }
     }
 
-    private List<StateExtractor.Tok> extractTokens(List<SpellAbility> pool,
+    List<StateExtractor.Tok> extractTokens(List<SpellAbility> pool,
             List<StateExtractor.Tok> hist) {
         try {
             List<StateExtractor.Tok> toks = StateExtractor.extract(
@@ -627,6 +628,131 @@ public class InstrumentedController extends GeneratedController {
         }
     }
 
+    /** The pool of the last priority decision (observe mode: base of an AI cost variant). */
+    private List<SpellAbility> lastPool;
+
+    /** Observe mode's AI cast is in progress (keyword-cost answers are labels). */
+    private static final ThreadLocal<int[]> OBSERVED_CAST = ThreadLocal.withInitial(() -> new int[1]);
+
+    /**
+     * Forge's AI cast, observed (schema 18, -Dmagicnet.payment): optional
+     * costs the AI chose as part of its variant are recorded, and when the
+     * cost has a card-choosing part the AI cast is replayed with an observing
+     * cost decision maker (CostChoices.observeCast).
+     */
+    private boolean playObservedOrAi(SpellAbility sa) {
+        if (sa == null || sa.isLandAbility() || !CostChoices.observes()) {
+            return super.playChosenSpellAbility(sa);
+        }
+        try {
+            CostChoices.observeOptional(this, sa, lastPool);
+        } catch (RuntimeException e) {
+            ManaPayment.count("cost: observe: optional threw");
+        }
+        OBSERVED_CAST.get()[0]++;
+        try {
+            if (CostChoices.hasCardChoiceCost(sa) && CostChoices.noTargetingPlayer(sa)) {
+                return CostChoices.observeCast(this, sa);
+            }
+            return super.playChosenSpellAbility(sa);
+        } finally {
+            OBSERVED_CAST.get()[0]--;
+        }
+    }
+
+    /**
+     * Schema 18: the engine pays costs through this decision maker
+     * (PlaySpellAbility.playAbility -> CostPayment.payCost). The human
+     * controller returns a HumanCostDecision; a routed payer gets
+     * CostChoices.Routed, which asks the card-choosing parts.
+     */
+    @Override
+    public forge.game.cost.CostDecisionMakerBase getCostDecisionMaker(Player p, SpellAbility sa, boolean effect,
+            String prompt) {
+        if (sa != null && p == getPlayer() && CostChoices.decides()) {
+            return new CostChoices.Routed(this, p, sa, effect, false);
+        }
+        return super.getCostDecisionMaker(p, sa, effect, prompt);
+    }
+
+    /** Kicker, buyback, entwine...: PlaySpellAbility.chooseOptionalAdditionalCosts on the engine cast. */
+    @Override
+    public List<forge.game.spellability.OptionalCostValue> chooseOptionalCosts(SpellAbility chosen,
+            List<forge.game.spellability.OptionalCostValue> list) {
+        if (chosen != null && list != null && !list.isEmpty() && CostChoices.decides()
+                && CostChoices.inEngineCast()) {
+            List<forge.game.spellability.OptionalCostValue> r = CostChoices.optional(this, chosen, list);
+            if (r != null) {
+                return r;
+            }
+        }
+        return super.chooseOptionalCosts(chosen, list);
+    }
+
+    /** Casualty, conspire, offspring (max 1); multikicker, replicate, squad (any number). */
+    @Override
+    public int chooseNumberForKeywordCost(SpellAbility sa, forge.game.cost.Cost cost,
+            forge.game.keyword.KeywordInterface ki, String text, int max) {
+        if (sa != null && cost != null && max > 0) {
+            if (CostChoices.decides() && CostChoices.inEngineCast()) {
+                int v = CostChoices.keyword(this, sa, cost, ki, text, max);
+                if (v >= 0) {
+                    return v;
+                }
+            } else if (CostChoices.observes() && OBSERVED_CAST.get()[0] > 0) {
+                ManaPayment.Snap pre = ManaPayment.preSnap(this);
+                int v = super.chooseNumberForKeywordCost(sa, cost, ki, text, max);
+                try {
+                    CostChoices.observeKeyword(this, sa, cost, ki, text, max, v, pre);
+                } catch (RuntimeException e) {
+                    ManaPayment.count("cost: observe: keyword threw");
+                }
+                return v;
+            }
+        }
+        return super.chooseNumberForKeywordCost(sa, cost, ki, text, max);
+    }
+
+    /** AlternateAdditionalCost (Lightning Axe): Forge's AI takes the first variant. */
+    @Override
+    public SpellAbility getAbilityToPlay(forge.game.card.Card host, List<SpellAbility> abilities,
+            forge.util.ITriggerEvent ev) {
+        if (abilities != null && abilities.size() >= 2 && CostChoices.decides() && CostChoices.inEngineCast()
+                && abilities.stream().allMatch(s -> s != null && s.isSpell())) {
+            SpellAbility r = CostChoices.alternative(this, host, abilities);
+            if (r != null) {
+                return r;
+            }
+        }
+        return super.getAbilityToPlay(host, abilities, ev);
+    }
+
+    /** Emerge / Offering: CostAdjustment asks for the creature to sacrifice inside a payment. */
+    @Override
+    public forge.game.card.CardCollectionView choosePermanentsToSacrifice(SpellAbility sa, int min, int max,
+            forge.game.card.CardCollectionView list, String type) {
+        if (ManaPayment.adjusting() && CostChoices.isEmergeOrOffering(sa, min, max) && list != null
+                && !list.isEmpty()) {
+            CostChoices.Pick pick = CostChoices.emergePick(this, sa, list);
+            if (CostChoices.decides()) {
+                List<forge.game.card.Card> got = CostChoices.ask(this, sa, pick);
+                if (got != null) {
+                    return new forge.game.card.CardCollection(got);
+                }
+            } else if (CostChoices.observes()) {
+                ManaPayment.Snap pre = ManaPayment.preSnap(this);
+                forge.game.card.CardCollectionView ai = super.choosePermanentsToSacrifice(sa, min, max, list, type);
+                try {
+                    CostChoices.observe(this, sa, pick, ai == null ? null : new java.util.ArrayList<>(ai), pre);
+                } catch (RuntimeException e) {
+                    ManaPayment.count("cost: observe: emerge threw");
+                }
+                return ai;
+            }
+        }
+        return super.choosePermanentsToSacrifice(sa, min, max, list, type);
+    }
+
     @Override
     public boolean payManaCost(forge.card.mana.ManaCost a0, forge.game.cost.CostPartMana a1,
             SpellAbility a2, String a3, forge.game.mana.ManaConversionMatrix a4, boolean a5) {
@@ -634,7 +760,96 @@ public class InstrumentedController extends GeneratedController {
         if (attempt != null) {
             attempt.reach("cost", a2);
         }
+        // Schema 17 (-Dmagicnet.payment): the human controller's route, whose
+        // applyManaToCost callback asks pay_mana steps (see ManaPayment).
+        if (a2 != null && ManaPayment.decides()) {
+            Object[] prev = ManaPayment.beginAdjust(a0, a2);
+            try {
+                return forge.game.player.PlaySpellAbility.payManaCost(this, a0, a1, a2, getPlayer(), a3, a4, a5);
+            } finally {
+                ManaPayment.endAdjust(prev);
+            }
+        }
+        if (a2 != null && ManaPayment.observes()) {
+            return ManaPayment.payObserved(this, a0, a2, a5);
+        }
         return super.payManaCost(a0, a1, a2, a3, a4, a5);
+    }
+
+    /**
+     * Convoke/Improvise inside a routed or observed payment (pay_convoke).
+     * Schema 18: Waterbend (a5 = most it may pay) too, as waterbend options.
+     */
+    @Override
+    public java.util.Map<forge.game.card.Card, forge.card.mana.ManaCostShard> chooseCardsForConvokeOrImprovise(
+            SpellAbility a0, forge.card.mana.ManaCost a1, forge.game.card.CardCollectionView a2, boolean a3,
+            boolean a4, Integer a5) {
+        if (a0 != null && ManaPayment.adjusting()) {
+            if (ManaPayment.decides()) {
+                return ManaPayment.convoke(this, a0, a1, a2, a3, a4, a5);
+            }
+            if (ManaPayment.observes()) {
+                ManaPayment.Snap pre = ManaPayment.preSnap(this);
+                java.util.Map<forge.game.card.Card, forge.card.mana.ManaCostShard> ai =
+                        super.chooseCardsForConvokeOrImprovise(a0, a1, a2, a3, a4, a5);
+                try {
+                    ManaPayment.observeConvoke(this, a0, a1, a2, a3, a4, ai, pre, a5);
+                } catch (RuntimeException e) {
+                    ManaPayment.count("observe: convoke reconstruction threw");
+                }
+                return ai;
+            }
+        }
+        return super.chooseCardsForConvokeOrImprovise(a0, a1, a2, a3, a4, a5);
+    }
+
+    /**
+     * "Add N mana in any combination of colors" (ManaEffect, no express
+     * choice): PlayerControllerHuman asks the colours; routed as one
+     * pay_mana_combo decision per unit (schema 18).
+     */
+    @Override
+    public java.util.Map<Byte, Integer> specifyManaCombo(SpellAbility sa, forge.card.ColorSet colors, int amount,
+            boolean different) {
+        if (ManaPayment.decides() && sa != null && amount > 0) {
+            java.util.Map<Byte, Integer> r = ManaPayment.combo(this, sa, colors, amount, different);
+            if (r != null) {
+                return r;
+            }
+        }
+        return super.specifyManaCombo(sa, colors, amount, different);
+    }
+
+    /** Delve inside a routed or observed payment (pay_delve). */
+    @Override
+    public forge.game.card.CardCollectionView chooseCardsToDelve(int a0, forge.game.card.CardCollection a1) {
+        SpellAbility sa = ManaPayment.adjustingSa();
+        if (sa != null) {
+            if (ManaPayment.decides()) {
+                return ManaPayment.delve(this, sa, a0, a1);
+            }
+            if (ManaPayment.observes()) {
+                ManaPayment.Snap pre = ManaPayment.preSnap(this);
+                forge.game.card.CardCollectionView ai = super.chooseCardsToDelve(a0, a1);
+                try {
+                    ManaPayment.observeDelve(this, sa, a0, a1, ai, pre);
+                } catch (RuntimeException e) {
+                    ManaPayment.count("observe: delve reconstruction threw");
+                }
+                return ai;
+            }
+        }
+        return super.chooseCardsToDelve(a0, a1);
+    }
+
+    /** Reached from PlaySpellAbility.payManaCost on the routed path: one pay_mana step at a time. */
+    @Override
+    public boolean applyManaToCost(forge.game.mana.ManaCostBeingPaid a0, SpellAbility a1, String a2,
+            forge.game.mana.ManaConversionMatrix a3, boolean a4) {
+        if (a1 != null && ManaPayment.decides()) {
+            return ManaPayment.payInteractive(this, a0, a1, a4);
+        }
+        return super.applyManaToCost(a0, a1, a2, a3, a4);
     }
 
     /**
@@ -801,12 +1016,36 @@ public class InstrumentedController extends GeneratedController {
         try {
             if (!"engine".equals(TARGET_MODE) || sa == null) {
                 boolean skipBefore = sa != null && sa.isSkip();
-                boolean r = super.playChosenSpellAbility(sa);
+                boolean r = playObservedOrAi(sa);
                 outcome = aiOutcome(sa, skipBefore);
                 return r;
             }
+            // PlaySpellAbility.playSpellAbility checks canPlay for spells only;
+            // the human UI never offers an ability it cannot activate, but the
+            // priority pool is unfiltered: a tapped land's mana ability was
+            // "activated" anyway (no tap, mana added), an unbounded mana loop.
+            if (!sa.isSpell() && !sa.isLandAbility()) {
+                boolean can;
+                try {
+                    sa.setActivatingPlayer(getPlayer());
+                    can = sa.canPlay();
+                } catch (RuntimeException e) {
+                    can = false;
+                }
+                if (!can) {
+                    ENGINE_UNPLAYABLE.incrementAndGet();
+                    outcome = "rolled_back";
+                    return false;
+                }
+            }
             try {
-                boolean ok = forge.game.player.PlaySpellAbility.playSpellAbility(this, getPlayer(), sa);
+                boolean ok;
+                CostChoices.ENGINE_CAST.get()[0]++;
+                try {
+                    ok = forge.game.player.PlaySpellAbility.playSpellAbility(this, getPlayer(), sa);
+                } finally {
+                    CostChoices.ENGINE_CAST.get()[0]--;
+                }
                 String name = "?";
                 try {
                     name = sa.getHostCard() == null ? "?" : sa.getHostCard().getName();
@@ -830,6 +1069,10 @@ public class InstrumentedController extends GeneratedController {
             }
         }
     }
+
+    /** Engine-path activations refused because the ability could not be activated (canPlay). */
+    static final java.util.concurrent.atomic.AtomicInteger ENGINE_UNPLAYABLE =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     /**
      * Forge's AI cast path always returns true; its helper's only trace of a
@@ -1063,16 +1306,18 @@ public class InstrumentedController extends GeneratedController {
             List<forge.game.card.Card> top = new java.util.ArrayList<>();
             List<forge.game.card.Card> other = new java.util.ArrayList<>();
             boolean first = true;
+            List<forge.game.card.Card> done = new java.util.ArrayList<>();
             for (forge.game.card.Card c : seen) {
-                String cref = StateExtractor.cardRef(c.getId());
-                String oid = OracleIds.of(c);
-                List<Serializer.Opt> opts = new java.util.ArrayList<>();
-                opts.add(new Serializer.Opt("put " + c.getName() + " on top").ref(cref).oracle(oid));
-                opts.add(new Serializer.Opt(scry ? "put " + c.getName() + " on the bottom"
-                        : "put " + c.getName() + " into graveyard").ref(cref).oracle(oid));
+                List<Serializer.Cand> opts = new java.util.ArrayList<>();
+                opts.add(Serializer.Cand.option(scry ? "scry_top" : "surveil_top"));
+                opts.add(Serializer.Cand.option(scry ? "scry_bottom" : "surveil_graveyard"));
+                Serializer.Prompt prompt = new Serializer.Prompt(kind).edge(Schema.OBJ, c);
+                for (forge.game.card.Card d : done) {
+                    prompt.select(d);
+                }
                 int pick;
                 if (decide) {
-                    pick = askChoice(kind, opts);
+                    pick = askChoice(prompt, opts);
                     if (pick == ActionSource.DELEGATE) {
                         if (first) {
                             return delegateArrange(cards, scry);
@@ -1083,9 +1328,10 @@ public class InstrumentedController extends GeneratedController {
                     boolean toTop = ai != null && ai.getLeft() != null && ai.getLeft().contains(c);
                     boolean toOther = ai != null && ai.getRight() != null && ai.getRight().contains(c);
                     pick = toTop ? 0 : toOther ? 1 : -1;
-                    closeChoice(openChoice(kind, opts), pick);
+                    closeChoice(openChoice(prompt, opts), pick);
                 }
                 first = false;
+                done.add(c);
                 if (pick == 1) {
                     other.add(c);
                     LibraryKnowledge.arranging(me, c, otherPile, -1);
@@ -1139,21 +1385,24 @@ public class InstrumentedController extends GeneratedController {
         List<forge.game.card.Card> remaining = new java.util.ArrayList<>(cards);
         List<forge.game.card.Card> out = new java.util.ArrayList<>();
         while (remaining.size() > 1) {
-            List<Serializer.Opt> opts = new java.util.ArrayList<>();
+            List<Serializer.Cand> opts = new java.util.ArrayList<>();
             for (forge.game.card.Card c : remaining) {
-                opts.add(new Serializer.Opt("place " + c.getName() + " next from the " + pile)
-                        .ref(StateExtractor.cardRef(c.getId())).oracle(OracleIds.of(c)));
+                opts.add(Serializer.Cand.ref(c, "order_next"));
+            }
+            Serializer.Prompt prompt = new Serializer.Prompt(kind);
+            for (forge.game.card.Card c : out) {
+                prompt.select(c);
             }
             int pick;
             if (expert == null) {
-                pick = askChoice(kind, opts);
+                pick = askChoice(prompt, opts);
                 if (pick < 0 || pick >= remaining.size()) {
                     pick = 0;
                 }
             } else {
                 forge.game.card.Card want = out.size() < expert.size() ? expert.get(out.size()) : null;
                 int label = want == null ? -1 : remaining.indexOf(want);
-                closeChoice(openChoice(kind, opts), label);
+                closeChoice(openChoice(prompt, opts), label);
                 pick = label < 0 ? 0 : label;
             }
             forge.game.card.Card c = remaining.remove(pick);
@@ -1530,7 +1779,17 @@ public class InstrumentedController extends GeneratedController {
      *
      * @return the record body, or null if nothing will consume it
      */
-    private String openChoice(String kind, List<Serializer.Opt> options) {
+    Serializer.Built openChoice(Serializer.Prompt prompt, List<Serializer.Cand> options) {
+        return openChoice(prompt, options, false);
+    }
+
+    /**
+     * @param deferPrompt render the prompt when the record is written, so
+     *        {@link Serializer.Prompt#select} can still record the expert's
+     *        answers to earlier steps of the same decomposed decision
+     */
+    private Serializer.Built openChoice(Serializer.Prompt prompt, List<Serializer.Cand> options,
+            boolean deferPrompt) {
         if (options == null || options.isEmpty() || !Serializer.enabled()
                 || ACTIONS.decides()) {
             return null;
@@ -1540,25 +1799,48 @@ public class InstrumentedController extends GeneratedController {
         if (toks == null) {
             return null;
         }
-        return Serializer.buildChoiceBody(getGame(), getPlayer(), toks,
-                hist == null ? 0 : hist.size(), kind, options);
+        Serializer.Built body = Serializer.buildChoiceBody(getGame(), getPlayer(), toks,
+                hist == null ? 0 : hist.size(), prompt, options, deferPrompt);
+        if (body != null) {
+            OPEN_BODIES.get()[0]++;
+        }
+        return body;
     }
 
     /**
-     * Writes a record opened by {@link #openChoice}.
+     * Observe-mode records built but not yet written. A record built after one
+     * of these (an observed payment inside an observed pay_unless) would be
+     * written first and break the per-viewer history delta order.
+     */
+    static final ThreadLocal<int[]> OPEN_BODIES = ThreadLocal.withInitial(() -> new int[1]);
+
+    /**
+     * Writes a record opened by {@link #openChoice}, labelled with the
+     * candidate behind option {@code chosen} (an index into the option list
+     * the caller built; candidates can be fewer when options merge).
      *
      * <p>Must be called for every opened body, including when the expert's
      * answer could not be located ({@code chosen < 0}): building commits the
      * per-viewer history cursor, so an unwritten body loses its events.
      */
-    private void closeChoice(String body, int chosen) {
+    void closeChoice(Serializer.Built body, int chosen) {
         if (body == null) {
             return;
         }
-        if (chosen < 0) {
+        OPEN_BODIES.get()[0]--;
+        writeBuilt(body, chosen);
+    }
+
+    /** Writes a body built outside {@link #openChoice}, labelled as {@link #closeChoice} does. */
+    void writeBuilt(Serializer.Built body, int chosen) {
+        if (body == null) {
+            return;
+        }
+        int cand = body.candidateOf(chosen);
+        if (cand < 0) {
             UNLABELLED.incrementAndGet();
         }
-        Serializer.writeChoice(body, chosen);
+        Serializer.writeChoice(body, cand);
     }
 
     private static final java.util.concurrent.atomic.AtomicInteger UNLABELLED =
@@ -1578,7 +1860,11 @@ public class InstrumentedController extends GeneratedController {
         return -1;
     }
 
-    private int askChoice(String kind, List<Serializer.Opt> options) {
+    /**
+     * Asks the action source. Returns an index into {@code options} (the first
+     * option behind the chosen candidate), or {@link ActionSource#DELEGATE}.
+     */
+    int askChoice(Serializer.Prompt prompt, List<Serializer.Cand> options) {
         if (options.isEmpty()) {
             return ActionSource.DELEGATE;
         }
@@ -1598,17 +1884,36 @@ public class InstrumentedController extends GeneratedController {
         if (toks == null) {
             return ActionSource.DELEGATE;
         }
-        String body = Serializer.buildChoiceBody(getGame(), getPlayer(), toks,
-                hist == null ? 0 : hist.size(), kind, options);
-        int pick = ACTIONS.choose(wantAgent ? Serializer.asRequest(body) : null,
-                options.size(), -1);
+        Serializer.Built body = Serializer.buildChoiceBody(getGame(), getPlayer(), toks,
+                hist == null ? 0 : hist.size(), prompt, options, false);
+        int pick = ACTIONS.choose(wantAgent ? Serializer.asRequest(body.body) : null,
+                body.candidates(), -1);
         if (pick == ActionSource.DELEGATE) {
             throw new IllegalStateException("action source " + ACTIONS.getClass().getSimpleName()
                     + " delegated after reporting decides()==true; the record for this decision"
                     + " was already built and its history events would be lost");
         }
         Serializer.writeChoice(body, pick);
-        return pick;
+        return body.optionOf(pick);
+    }
+
+    /** Rules text of the ability asking a question, for the prompt when it has no token. */
+    private String askingText(SpellAbility sa) {
+        if (sa == null) {
+            return null;
+        }
+        SpellAbility root = sa.getRootAbility() == null ? sa : sa.getRootAbility();
+        return Serializer.optionText(String.valueOf(root), root, getGame());
+    }
+
+    /** The prompt of a decision asked on behalf of {@code sa}: edges to it and its host. */
+    Serializer.Prompt promptFor(String kind, SpellAbility sa) {
+        Serializer.Prompt p = new Serializer.Prompt(kind);
+        if (sa != null) {
+            p.edge(Schema.STACK_OBJECT, sa).edge(Schema.SOURCE_IS, sa.getHostCard())
+             .ability(askingText(sa));
+        }
+        return p;
     }
 
     /**
@@ -1642,6 +1947,7 @@ public class InstrumentedController extends GeneratedController {
                 attacker.getCreaturesInPlay();
 
         boolean any = false;
+        List<forge.game.card.Card> declared = new java.util.ArrayList<>();
         for (forge.game.card.Card c : possible) {
             List<forge.game.GameEntity> legal = new java.util.ArrayList<>();
             for (forge.game.GameEntity d : defenders) {
@@ -1652,14 +1958,8 @@ public class InstrumentedController extends GeneratedController {
             if (legal.isEmpty()) {
                 continue;
             }
-            List<Serializer.Opt> opts = new java.util.ArrayList<>();
-            String cref = StateExtractor.cardRef(c.getId());
-            opts.add(new Serializer.Opt("do not attack with " + c.getName()).ref(cref));
-            for (forge.game.GameEntity d : legal) {
-                opts.add(new Serializer.Opt("attack " + d + " with " + c.getName())
-                        .ref(cref).ref(StateExtractor.entityRef(d)));
-            }
-            int pick = askChoice("declare_attacker", opts);
+            Serializer.Prompt prompt = attackerPrompt(c, declared);
+            int pick = askChoice(prompt, attackerOpts(legal));
             if (pick == ActionSource.DELEGATE) {
                 // Mid-sequence delegation would leave a partly policy-declared
                 // combat for the AI to finish, which is neither the policy's
@@ -1673,8 +1973,29 @@ public class InstrumentedController extends GeneratedController {
             if (pick > 0 && pick <= legal.size()) {
                 combat.addAttacker(c, legal.get(pick - 1));
                 any = true;
+                declared.add(c);
             }
         }
+    }
+
+    /** One declare_attacker step: about {@code c}, after {@code declared} were declared. */
+    private Serializer.Prompt attackerPrompt(forge.game.card.Card c,
+            List<forge.game.card.Card> declared) {
+        Serializer.Prompt p = new Serializer.Prompt("declare_attacker").edge(Schema.ATTACKS, c);
+        for (forge.game.card.Card a : declared) {
+            p.select(a);
+        }
+        return p;
+    }
+
+    /** "Don't attack", then each legal defender (a player, planeswalker or battle token). */
+    private static List<Serializer.Cand> attackerOpts(List<forge.game.GameEntity> legal) {
+        List<Serializer.Cand> opts = new java.util.ArrayList<>();
+        opts.add(Serializer.Cand.option("no_attack"));
+        for (forge.game.GameEntity d : legal) {
+            opts.add(Serializer.Cand.ref(d, "attack"));
+        }
+        return opts;
     }
 
     /**
@@ -1691,7 +2012,7 @@ public class InstrumentedController extends GeneratedController {
                 new java.util.ArrayList<>(combat.getDefenders());
         List<forge.game.card.Card> creatures = new java.util.ArrayList<>();
         List<List<forge.game.GameEntity>> legals = new java.util.ArrayList<>();
-        List<String> bodies = new java.util.ArrayList<>();
+        List<Serializer.Built> bodies = new java.util.ArrayList<>();
 
         for (forge.game.card.Card c : attacker.getCreaturesInPlay()) {
             List<forge.game.GameEntity> legal = new java.util.ArrayList<>();
@@ -1703,30 +2024,34 @@ public class InstrumentedController extends GeneratedController {
             if (legal.isEmpty()) {
                 continue;
             }
-            List<Serializer.Opt> opts = new java.util.ArrayList<>();
-            String cref = StateExtractor.cardRef(c.getId());
-            opts.add(new Serializer.Opt("do not attack with " + c.getName()).ref(cref));
-            for (forge.game.GameEntity d : legal) {
-                opts.add(new Serializer.Opt("attack " + d + " with " + c.getName())
-                        .ref(cref).ref(StateExtractor.entityRef(d)));
-            }
             creatures.add(c);
             legals.add(legal);
-            bodies.add(openChoice("declare_attacker", opts));
+            // Deferred: which earlier creatures the AI declared is known only
+            // after it answers, and is what the routed path's prompt selects.
+            bodies.add(openChoice(attackerPrompt(c, java.util.Collections.emptyList()),
+                    attackerOpts(legal), true));
         }
 
         try {
             super.declareAttackers(attacker, combat);
         } finally {
+            List<forge.game.card.Card> declared = new java.util.ArrayList<>();
             for (int i = 0; i < creatures.size(); i++) {
                 forge.game.card.Card c = creatures.get(i);
                 int chosen = 0;
+                Serializer.Built body = bodies.get(i);
+                if (body != null && body.prompt() != null) {
+                    for (forge.game.card.Card a : declared) {
+                        body.prompt().select(a);
+                    }
+                }
                 if (combat.isAttacking(c)) {
                     forge.game.GameEntity d = combat.getDefenderByAttacker(c);
                     int at = legals.get(i).indexOf(d);
                     chosen = at < 0 ? -1 : at + 1;
+                    declared.add(c);
                 }
-                closeChoice(bodies.get(i), chosen);
+                closeChoice(body, chosen);
             }
         }
     }
@@ -1755,6 +2080,7 @@ public class InstrumentedController extends GeneratedController {
         }
 
         boolean any = false;
+        List<forge.game.card.Card> declared = new java.util.ArrayList<>();
         for (forge.game.card.Card b : defender.getCreaturesInPlay()) {
             List<forge.game.card.Card> legal = new java.util.ArrayList<>();
             for (forge.game.card.Card a : attackers) {
@@ -1765,14 +2091,7 @@ public class InstrumentedController extends GeneratedController {
             if (legal.isEmpty()) {
                 continue;
             }
-            List<Serializer.Opt> opts = new java.util.ArrayList<>();
-            String bref = StateExtractor.cardRef(b.getId());
-            opts.add(new Serializer.Opt("do not block with " + b.getName()).ref(bref));
-            for (forge.game.card.Card a : legal) {
-                opts.add(new Serializer.Opt("block " + a.getName() + " with " + b.getName())
-                        .ref(bref).ref(StateExtractor.cardRef(a.getId())));
-            }
-            int pick = askChoice("declare_blocker", opts);
+            int pick = askChoice(blockerPrompt(b, declared), blockerOpts(legal));
             if (pick == ActionSource.DELEGATE) {
                 if (!any) {
                     super.declareBlockers(defender, combat);
@@ -1783,6 +2102,7 @@ public class InstrumentedController extends GeneratedController {
             if (pick > 0 && pick <= legal.size()) {
                 combat.addBlocker(legal.get(pick - 1), b);
                 any = true;
+                declared.add(b);
             }
         }
     }
@@ -1799,12 +2119,32 @@ public class InstrumentedController extends GeneratedController {
     }
 
 
+    /** One declare_blocker step: about {@code b}, after {@code declared} were declared. */
+    private Serializer.Prompt blockerPrompt(forge.game.card.Card b,
+            List<forge.game.card.Card> declared) {
+        Serializer.Prompt p = new Serializer.Prompt("declare_blocker").edge(Schema.BLOCKS, b);
+        for (forge.game.card.Card d : declared) {
+            p.select(d);
+        }
+        return p;
+    }
+
+    /** "Don't block", then each attacker {@code b} may legally block. */
+    private static List<Serializer.Cand> blockerOpts(List<forge.game.card.Card> legal) {
+        List<Serializer.Cand> opts = new java.util.ArrayList<>();
+        opts.add(Serializer.Cand.option("no_block"));
+        for (forge.game.card.Card a : legal) {
+            opts.add(Serializer.Cand.ref(a, "block"));
+        }
+        return opts;
+    }
+
     /** Blocking counterpart of {@link #observeAttackers}. */
     private void observeBlockers(forge.game.player.Player defender,
             forge.game.combat.Combat combat, forge.game.card.CardCollection attackers) {
         List<forge.game.card.Card> blockers = new java.util.ArrayList<>();
         List<List<forge.game.card.Card>> legals = new java.util.ArrayList<>();
-        List<String> bodies = new java.util.ArrayList<>();
+        List<Serializer.Built> bodies = new java.util.ArrayList<>();
 
         for (forge.game.card.Card b : defender.getCreaturesInPlay()) {
             List<forge.game.card.Card> legal = new java.util.ArrayList<>();
@@ -1816,24 +2156,25 @@ public class InstrumentedController extends GeneratedController {
             if (legal.isEmpty()) {
                 continue;
             }
-            List<Serializer.Opt> opts = new java.util.ArrayList<>();
-            String bref = StateExtractor.cardRef(b.getId());
-            opts.add(new Serializer.Opt("do not block with " + b.getName()).ref(bref));
-            for (forge.game.card.Card a : legal) {
-                opts.add(new Serializer.Opt("block " + a.getName() + " with " + b.getName())
-                        .ref(bref).ref(StateExtractor.cardRef(a.getId())));
-            }
             blockers.add(b);
             legals.add(legal);
-            bodies.add(openChoice("declare_blocker", opts));
+            bodies.add(openChoice(blockerPrompt(b, java.util.Collections.emptyList()),
+                    blockerOpts(legal), true));
         }
 
         try {
             super.declareBlockers(defender, combat);
         } finally {
+            List<forge.game.card.Card> declared = new java.util.ArrayList<>();
             for (int i = 0; i < blockers.size(); i++) {
                 forge.game.card.Card b = blockers.get(i);
                 int chosen = 0;
+                Serializer.Built body = bodies.get(i);
+                if (body != null && body.prompt() != null) {
+                    for (forge.game.card.Card d : declared) {
+                        body.prompt().select(d);
+                    }
+                }
                 // A creature may legally block several attackers; the
                 // decomposition offers one, so the first is recorded.
                 forge.game.card.Card blocked = null;
@@ -1845,8 +2186,9 @@ public class InstrumentedController extends GeneratedController {
                 }
                 if (blocked != null) {
                     chosen = legals.get(i).indexOf(blocked) + 1;
+                    declared.add(b);
                 }
-                closeChoice(bodies.get(i), chosen);
+                closeChoice(body, chosen);
             }
         }
     }
@@ -1885,21 +2227,16 @@ public class InstrumentedController extends GeneratedController {
             for (T t : options) {
                 list.add(t);
             }
-            List<Serializer.Opt> opts = new java.util.ArrayList<>();
+            List<Serializer.Cand> opts = new java.util.ArrayList<>();
             if (optional) {
-                opts.add(new Serializer.Opt("choose nothing"));
+                opts.add(Serializer.Cand.option("choose_nothing"));
             }
             for (T t : list) {
-                // Card.toString() appends the object id ("Yorion (92)"), a
-                // run-unstable join key; use the name.
-                opts.add(new Serializer.Opt(t instanceof forge.game.card.Card
-                                ? ((forge.game.card.Card) t).getName() : String.valueOf(t))
-                        .ref(StateExtractor.entityRef(t))
-                        .oracle(t instanceof forge.game.card.Card
-                                ? OracleIds.of((forge.game.card.Card) t) : null));
+                opts.add(Serializer.Cand.ref(t, "choose_object"));
             }
+            Serializer.Prompt prompt = promptFor(kind, sa).text(title, getGame()).optional(optional);
             revealBeforeAsking(dr);
-            int pick = askChoice(kind, opts);
+            int pick = askChoice(prompt, opts);
             if (pick != ActionSource.DELEGATE) {
                 int base = optional ? 1 : 0;
                 if (pick < base) {
@@ -1907,7 +2244,7 @@ public class InstrumentedController extends GeneratedController {
                 }
                 return list.get(Math.min(pick - base, list.size() - 1));
             }
-            String body = openChoice(kind, opts);
+            Serializer.Built body = openChoice(prompt, opts);
             if (body != null) {
                 T picked = null;
                 try {
@@ -1961,17 +2298,20 @@ public class InstrumentedController extends GeneratedController {
             String selectPrompt, boolean isOptional, forge.game.player.Player decider) {
         census("chooseSingleCardForZoneChange");
         if (routeChoices() && fetchList != null && fetchList.size() + (isOptional ? 1 : 0) > 1) {
-            List<Serializer.Opt> opts = new java.util.ArrayList<>();
+            // A pick from the decider's own library at an unknown position
+            // references that card name's aggregate: identical copies are one
+            // candidate, and the first copy behind it is the one fetched.
+            List<Serializer.Cand> opts = new java.util.ArrayList<>();
             if (isOptional) {
-                opts.add(new Serializer.Opt("choose nothing"));
+                opts.add(Serializer.Cand.option("choose_nothing"));
             }
             for (forge.game.card.Card c : fetchList) {
-                opts.add(new Serializer.Opt(c.getName())
-                        .ref(StateExtractor.cardRef(c.getId()))
-                        .oracle(OracleIds.of(c)));
+                opts.add(Serializer.Cand.ref(c, "choose_object"));
             }
+            Serializer.Prompt prompt = promptFor("choose_card_zone_change", sa)
+                    .text(selectPrompt, getGame()).optional(isOptional);
             revealBeforeAsking(dr);
-            int pick = askChoice("choose_card_zone_change", opts);
+            int pick = askChoice(prompt, opts);
             if (pick != ActionSource.DELEGATE) {
                 int base = isOptional ? 1 : 0;
                 if (pick < base) {
@@ -1979,15 +2319,18 @@ public class InstrumentedController extends GeneratedController {
                 }
                 return fetchList.get(Math.min(pick - base, fetchList.size() - 1));
             }
-            String body = openChoice("choose_card_zone_change", opts);
+            Serializer.Built body = openChoice(prompt, opts);
             if (body != null) {
+                // Forge's AI sorts fetchList in place (best card first), so the
+                // label is located in the order the options were built from.
+                List<forge.game.card.Card> asOffered = new java.util.ArrayList<>(fetchList);
                 forge.game.card.Card picked = null;
                 try {
                     picked = super.chooseSingleCardForZoneChange(destination, origin, sa,
                             fetchList, dr, selectPrompt, isOptional, decider);
                     return picked;
                 } finally {
-                    closeChoice(body, optionIndex(fetchList, picked, isOptional));
+                    closeChoice(body, optionIndex(asOffered, picked, isOptional));
                 }
             }
         }
@@ -2001,15 +2344,17 @@ public class InstrumentedController extends GeneratedController {
         // Unbounded maxima (X costs against an empty pool) would enumerate an
         // absurd option list, so only route a small, finite range.
         if (routeChoices() && max > min && max - min <= 32) {
-            List<Serializer.Opt> opts = new java.util.ArrayList<>();
+            List<Serializer.Cand> opts = new java.util.ArrayList<>();
             for (int v = min; v <= max; v++) {
-                opts.add(new Serializer.Opt(String.valueOf(v)));
+                opts.add(Serializer.Cand.option("number").value(v));
             }
-            int pick = askChoice("choose_number", opts);
+            Serializer.Prompt prompt = promptFor("choose_number", sa).text(title, getGame())
+                    .min(min).max(max);
+            int pick = askChoice(prompt, opts);
             if (pick != ActionSource.DELEGATE) {
                 return min + Math.max(0, Math.min(pick, max - min));
             }
-            String body = openChoice("choose_number", opts);
+            Serializer.Built body = openChoice(prompt, opts);
             if (body != null) {
                 int picked = min;
                 try {
@@ -2028,14 +2373,13 @@ public class InstrumentedController extends GeneratedController {
     public boolean confirmTrigger(forge.game.trigger.WrappedAbility wa) {
         census("confirmTrigger");
         if (routeChoices()) {
-            List<Serializer.Opt> opts = java.util.Arrays.asList(
-                    new Serializer.Opt("decline"),
-                    new Serializer.Opt("accept: " + stripIds(String.valueOf(wa))));
-            int pick = askChoice("confirm_trigger", opts);
+            List<Serializer.Cand> opts = confirmTriggerOpts(wa);
+            Serializer.Prompt prompt = confirmTriggerPrompt(wa);
+            int pick = askChoice(prompt, opts);
             if (pick != ActionSource.DELEGATE) {
                 return pick > 0;
             }
-            String body = openChoice("confirm_trigger", opts);
+            Serializer.Built body = openChoice(prompt, opts);
             if (body != null) {
                 boolean picked = false;
                 try {
@@ -2056,14 +2400,19 @@ public class InstrumentedController extends GeneratedController {
             java.util.Map<String, Object> params) {
         census("confirmAction");
         if (routeChoices()) {
-            List<Serializer.Opt> choices = java.util.Arrays.asList(
-                    new Serializer.Opt("decline"),
-                    new Serializer.Opt("accept: " + prompt));
-            int pick = askChoice("confirm_action", choices);
+            List<Serializer.Cand> choices = java.util.Arrays.asList(
+                    Serializer.Cand.option("decline"),
+                    Serializer.Cand.option("confirm").ability(askingText(sa)));
+            Serializer.Prompt ask = new Serializer.Prompt("confirm_action")
+                    .text(prompt, getGame())
+                    .edge(Schema.STACK_OBJECT, sa)
+                    .edge(Schema.SOURCE_IS, sa != null ? sa.getHostCard() : null)
+                    .edge(Schema.OBJ, c);
+            int pick = askChoice(ask, choices);
             if (pick != ActionSource.DELEGATE) {
                 return pick > 0;
             }
-            String body = openChoice("confirm_action", choices);
+            Serializer.Built body = openChoice(ask, choices);
             if (body != null) {
                 boolean picked = false;
                 try {
@@ -2087,25 +2436,29 @@ public class InstrumentedController extends GeneratedController {
         // subset problem like combat and wants the same sequential treatment;
         // guessing at it here would silently pick a wrong number of modes.
         if (routeChoices() && min == 1 && num == 1 && possible != null && possible.size() > 1) {
-            List<Serializer.Opt> opts = new java.util.ArrayList<>();
+            List<Serializer.Cand> opts = new java.util.ArrayList<>();
             for (forge.game.spellability.AbilitySub m : possible) {
-                opts.add(new Serializer.Opt(String.valueOf(m)));
+                opts.add(Serializer.Cand.option("mode")
+                        .ability(Serializer.optionText(String.valueOf(m), m, getGame())));
             }
-            int pick = askChoice("choose_mode", opts);
+            Serializer.Prompt prompt = promptFor("choose_mode", sa).min(min).max(num);
+            int pick = askChoice(prompt, opts);
             if (pick != ActionSource.DELEGATE && pick >= 0 && pick < possible.size()) {
                 List<forge.game.spellability.AbilitySub> one = new java.util.ArrayList<>();
                 one.add(possible.get(pick));
                 return one;
             }
-            String body = openChoice("choose_mode", opts);
+            Serializer.Built body = openChoice(prompt, opts);
             if (body != null) {
+                // As for fetch lists: locate the label in the order offered.
+                List<forge.game.spellability.AbilitySub> asOffered = new java.util.ArrayList<>(possible);
                 List<forge.game.spellability.AbilitySub> picked = null;
                 try {
                     picked = super.chooseModeForAbility(sa, possible, min, num, allowRepeat);
                     return picked;
                 } finally {
                     closeChoice(body, picked == null || picked.size() != 1
-                            ? -1 : optionIndex(possible, picked.get(0), false));
+                            ? -1 : optionIndex(asOffered, picked.get(0), false));
                 }
             }
         }
@@ -2135,19 +2488,15 @@ public class InstrumentedController extends GeneratedController {
             return super.payCostToPreventEffect(cost, sa, alreadyPaid, allPayers);
         }
         Player me = getPlayer();
-        forge.game.card.Card src = sa.getHostCard();
-        boolean shown = src != null && shownTo(src, me);
-        String cref = shown ? StateExtractor.cardRef(src.getId()) : null;
-        String oid = shown ? OracleIds.of(src) : null;
-        String of = shown ? " (" + src.getName() + ")" : "";
-        List<Serializer.Opt> opts = java.util.Arrays.asList(
-                new Serializer.Opt("don't pay" + of).ref(cref).oracle(oid),
-                new Serializer.Opt(payText(cost) + of).ref(cref).oracle(oid));
-        int pick = askChoice("pay_unless", opts);
+        List<Serializer.Cand> opts = java.util.Arrays.asList(
+                Serializer.Cand.option("decline"),
+                Serializer.Cand.option("pay").cost(costText(cost)));
+        Serializer.Prompt prompt = promptFor("pay_unless", sa);
+        int pick = askChoice(prompt, opts);
         if (pick != ActionSource.DELEGATE) {
             return pick == 1 && payUnlessCost(cost, sa, me);
         }
-        String body = openChoice("pay_unless", opts);
+        Serializer.Built body = openChoice(prompt, opts);
         if (body != null) {
             boolean paid = false;
             try {
@@ -2193,7 +2542,8 @@ public class InstrumentedController extends GeneratedController {
         forge.game.cost.CostPayment payment = new forge.game.cost.CostPayment(cost, sa);
         boolean ok = false;
         try {
-            ok = payment.payCost(new forge.ai.AiCostDecision(me, sa, true));
+            ok = payment.payCost(CostChoices.decides() ? getCostDecisionMaker(me, sa, true)
+                    : new forge.ai.AiCostDecision(me, sa, true));
             return ok;
         } finally {
             if (!ok) {
@@ -2206,13 +2556,11 @@ public class InstrumentedController extends GeneratedController {
     private static final java.util.concurrent.atomic.AtomicInteger UNLESS_PAY_FAILED =
             new java.util.concurrent.atomic.AtomicInteger();
 
-    /** "pay {3}", "pay 2 life" -- Forge words some costs with a leading "Pay". */
-    private static String payText(forge.game.cost.Cost cost) {
-        String c = costText(cost);
-        return c.regionMatches(true, 0, "pay ", 0, 4) ? "pay " + c.substring(4) : "pay " + c;
-    }
-
-    private static String costText(forge.game.cost.Cost cost) {
+    /**
+     * The cost of a pay option ("{3}", "2 life"): normalized like ability
+     * text, without the leading "Pay" Forge puts on some costs.
+     */
+    private String costText(forge.game.cost.Cost cost) {
         String s;
         try {
             s = cost.toSimpleString();
@@ -2222,20 +2570,11 @@ public class InstrumentedController extends GeneratedController {
         if (s == null || s.isEmpty()) {
             s = String.valueOf(cost);
         }
-        return stripIds(s.trim());
-    }
-
-    /** Forge renders objects as "Name (id)"; the id is run-unstable. */
-    static String stripIds(String s) {
-        return s == null ? null : s.replaceAll(" \\(\\d+\\)", "");
-    }
-
-    private static boolean shownTo(forge.game.card.Card c, Player viewer) {
-        try {
-            return c.getView().canBeShownTo(viewer.getView());
-        } catch (RuntimeException e) {
-            return false;
+        s = EventTokenizer.normalize(s, getGame());
+        if (s != null && s.regionMatches(true, 0, "pay ", 0, 4)) {
+            s = s.substring(4).trim();
         }
+        return s == null || s.isBlank() ? null : s;
     }
 
     // ---- Simultaneous triggers: order and targets ----------------------------
@@ -2335,19 +2674,23 @@ public class InstrumentedController extends GeneratedController {
         List<SpellAbility> remaining = new java.util.ArrayList<>(sas);
         List<SpellAbility> out = new java.util.ArrayList<>();
         while (remaining.size() > 1) {
-            List<Serializer.Opt> opts = new java.util.ArrayList<>();
+            List<Serializer.Cand> opts = new java.util.ArrayList<>();
             for (SpellAbility sa : remaining) {
-                opts.add(entryOpt("put ", sa, " on the stack next"));
+                opts.add(entryOpt(sa));
             }
+            // Entries already placed are not tokens yet (nothing is put on
+            // the stack until the order is complete): counted, no edges.
+            Serializer.Prompt prompt = new Serializer.Prompt("order_triggers")
+                    .selectedOther(out.size());
             int pick;
             if (expert == null) {
-                pick = askChoice("order_triggers", opts);
+                pick = askChoice(prompt, opts);
                 if (pick < 0 || pick >= remaining.size()) {
                     pick = 0;
                 }
             } else {
                 int label = remaining.indexOf(expert.get(out.size()));
-                closeChoice(openChoice("order_triggers", opts), label);
+                closeChoice(openChoice(prompt, opts), label);
                 pick = Math.max(0, label);
             }
             out.add(remaining.remove(pick));
@@ -2356,16 +2699,25 @@ public class InstrumentedController extends GeneratedController {
         return out;
     }
 
-    /** Option naming a stack entry by its source card and its own text. */
-    private Serializer.Opt entryOpt(String prefix, SpellAbility sa, String suffix) {
-        forge.game.card.Card host = sa.getHostCard();
-        boolean shown = host != null && shownTo(host, getPlayer());
-        String text = stripIds(String.valueOf(sa));
-        String name = shown ? host.getName() : "a hidden card";
-        String what = sa.isTrigger() ? " trigger" : sa.isCopied() ? " copy" : " ability";
-        return new Serializer.Opt(prefix + name + what + suffix + ": " + text)
-                .ref(shown ? StateExtractor.cardRef(host.getId()) : null)
-                .oracle(shown ? OracleIds.of(host) : null);
+    /** Option token for a stack entry: its own text and an edge to its source card. */
+    private Serializer.Cand entryOpt(SpellAbility sa) {
+        return Serializer.Cand.option("order_next")
+                .ability(Serializer.optionText(String.valueOf(sa), sa, getGame()))
+                .edge(Schema.SOURCE_IS, sa.getHostCard());
+    }
+
+    /** decline / confirm for an optional trigger; confirm carries the trigger's text. */
+    private List<Serializer.Cand> confirmTriggerOpts(forge.game.trigger.WrappedAbility wa) {
+        return java.util.Arrays.asList(
+                Serializer.Cand.option("decline"),
+                Serializer.Cand.option("confirm")
+                        .ability(Serializer.optionText(String.valueOf(wa), wa, getGame()))
+                        .edge(Schema.SOURCE_IS, wa == null ? null : wa.getHostCard()));
+    }
+
+    private Serializer.Prompt confirmTriggerPrompt(forge.game.trigger.WrappedAbility wa) {
+        return new Serializer.Prompt("confirm_trigger")
+                .edge(Schema.SOURCE_IS, wa == null ? null : wa.getHostCard());
     }
 
     /**
@@ -2455,8 +2807,7 @@ public class InstrumentedController extends GeneratedController {
                 }
                 continue;
             }
-            List<Serializer.Opt> opts = targetOpts(sa, cands, canStop);
-            int pick = askChoice("choose_target", opts);
+            int pick = askChoice(targetPrompt(sa, canStop), targetOpts(cands, canStop));
             if (pick == ActionSource.DELEGATE) {
                 if (asked) {
                     break;
@@ -2474,35 +2825,35 @@ public class InstrumentedController extends GeneratedController {
         return sa.isTargetNumberValid();
     }
 
-    private List<Serializer.Opt> targetOpts(SpellAbility sa,
-            List<forge.game.GameEntity> cands, boolean canStop) {
-        Player me = getPlayer();
-        forge.game.card.Card host = sa.getHostCard();
-        String src = host != null && shownTo(host, me) ? host.getName() : "a hidden card";
-        int slot = sa.getTargets().size() + 1;
-        String what = src + " trigger" + (slot > 1 ? " (target " + slot + ")" : "");
-        List<Serializer.Opt> opts = new java.util.ArrayList<>();
+    /**
+     * choose_target candidates: "choose no more targets" once the minimum is
+     * met, then a reference to each legal target's token.
+     */
+    private static List<Serializer.Cand> targetOpts(List<forge.game.GameEntity> cands,
+            boolean canStop) {
+        List<Serializer.Cand> opts = new java.util.ArrayList<>();
         if (canStop) {
-            opts.add(new Serializer.Opt("choose no more targets for " + what));
+            opts.add(Serializer.Cand.option("choose_nothing"));
         }
         for (forge.game.GameEntity e : cands) {
-            if (e instanceof forge.game.card.Card) {
-                forge.game.card.Card c = (forge.game.card.Card) e;
-                boolean shown = shownTo(c, me);
-                opts.add(new Serializer.Opt("target " + (shown ? c.getName() : "a hidden card")
-                                + " with " + what)
-                        .ref(shown ? StateExtractor.cardRef(c.getId()) : null)
-                        .oracle(shown ? OracleIds.of(c) : null));
-            } else if (e instanceof Player) {
-                opts.add(new Serializer.Opt("target " + (e.equals(me) ? "yourself" : "opponent")
-                                + " with " + what)
-                        .ref(StateExtractor.entityRef(e)));
-            } else {
-                opts.add(new Serializer.Opt("target " + stripIds(String.valueOf(e))
-                        + " with " + what));
-            }
+            opts.add(Serializer.Cand.ref(e, "choose_object"));
         }
         return opts;
+    }
+
+    /** The prompt of one target slot: limits, and the targets already chosen. */
+    private Serializer.Prompt targetPrompt(SpellAbility sa, boolean canStop) {
+        Serializer.Prompt p = promptFor("choose_target", sa).optional(canStop);
+        try {
+            forge.game.spellability.TargetRestrictions tr = sa.getTargetRestrictions();
+            p.min(tr.getMinTargets(sa.getHostCard(), sa)).max(tr.getMaxTargets(sa.getHostCard(), sa));
+            for (forge.game.GameObject o : sa.getTargets()) {
+                p.select(o);
+            }
+        } catch (RuntimeException ignored) {
+            // limits are optional components
+        }
+        return p;
     }
 
     /** An observe-mode choose_target record awaiting the AI's binding. */
@@ -2510,10 +2861,10 @@ public class InstrumentedController extends GeneratedController {
         final SpellAbility tgtSa;
         final List<forge.game.GameEntity> cands;
         final boolean canStop;
-        final String body;
+        final Serializer.Built body;
 
         ObservedTarget(SpellAbility tgtSa, List<forge.game.GameEntity> cands, boolean canStop,
-                String body) {
+                Serializer.Built body) {
             this.tgtSa = tgtSa;
             this.cands = cands;
             this.canStop = canStop;
@@ -2580,7 +2931,7 @@ public class InstrumentedController extends GeneratedController {
         if (cands.size() + (canStop ? 1 : 0) < 2) {
             return null;
         }
-        String body = openChoice("choose_target", targetOpts(tgtSa, cands, canStop));
+        Serializer.Built body = openChoice(targetPrompt(tgtSa, canStop), targetOpts(cands, canStop));
         return body == null ? null : new ObservedTarget(tgtSa, cands, canStop, body);
     }
 
@@ -2617,11 +2968,9 @@ public class InstrumentedController extends GeneratedController {
         if (!routeChoices() || wa == null) {
             return super.playTrigger(host, wa, isMandatory);
         }
-        List<Serializer.Opt> confirm = isMandatory ? null : java.util.Arrays.asList(
-                new Serializer.Opt("decline"),
-                new Serializer.Opt("accept: " + stripIds(String.valueOf(wa))));
+        List<Serializer.Cand> confirm = isMandatory ? null : confirmTriggerOpts(wa);
         if (ACTIONS.decides()) {
-            if (confirm != null && askChoice("confirm_trigger", confirm) == 0) {
+            if (confirm != null && askChoice(confirmTriggerPrompt(wa), confirm) == 0) {
                 return false;
             }
             if (!prepareTrigger(wa, true)) {
@@ -2629,7 +2978,7 @@ public class InstrumentedController extends GeneratedController {
             }
             return forge.ai.ComputerUtil.playNoStack(wa.getActivatingPlayer(), wa, getGame(), true);
         }
-        String body = confirm == null ? null : openChoice("confirm_trigger", confirm);
+        Serializer.Built body = confirm == null ? null : openChoice(confirmTriggerPrompt(wa), confirm);
         // A declined optional trigger has no target decision in decide mode.
         ObservedTarget ot = isMandatory ? openObservedTarget(wa) : null;
         boolean used = false;

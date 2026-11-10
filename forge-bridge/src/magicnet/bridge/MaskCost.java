@@ -434,6 +434,27 @@ public final class MaskCost {
         return generic;
     }
 
+    /**
+     * Schema 18: shard mask of a {S} shard in {@link #extendable}'s
+     * {@code shards}: any mana from a source whose {@code snow} flag is set
+     * (no colour bit is 0x40).
+     */
+    static final byte SNOW = 0x40;
+
+    /**
+     * Schema 18: a shard of a mana ability's own cost (filters, Signets): the
+     * low bits are the requirement ({@link #ANY} for a generic point), and it
+     * may not be paid by a source whose {@code filterOut} is set -- an ability
+     * cannot pay for itself (chains of filters are therefore not modelled).
+     */
+    static final byte COST_FLAG = (byte) 0x80;
+
+    /** Low bits of a cost shard for one generic point: any source. */
+    static final byte ANY = 0x3F;
+
+    /** Low bits of a cost shard "tap an untapped creature" (Springleaf Drum): a {@code fodder} source. */
+    static final byte CREATURE = 0x3E;
+
     /** Beyond this many expanded unit sources, stop refining and answer loosely. */
     private static final int UNIT_CAP = 64;
 
@@ -530,6 +551,9 @@ public final class MaskCost {
                 PaymentCardinality.Src unit = new PaymentCardinality.Src();
                 unit.options.add(new int[] {opt[0], 1});
                 unit.key = remaining.get(j).key;
+                unit.snow = remaining.get(j).snow;
+                unit.filterOut = remaining.get(j).filterOut;
+                unit.fodder = remaining.get(j).fodder;
                 units.add(unit);
             }
         }
@@ -555,7 +579,13 @@ public final class MaskCost {
         }
         // Every source now yields one mana, so each unmatched one covers one
         // point of generic and each matched one is already spent.
-        return nr - matched >= generic;
+        int spare = 0;
+        for (int j = 0; j < nr; j++) {
+            if (matchOf[j] < 0 && !units.get(j).options.isEmpty()) {
+                spare++;
+            }
+        }
+        return spare >= generic;
     }
 
     private static boolean augment(int shardIdx, List<Byte> shards,
@@ -566,10 +596,20 @@ public final class MaskCost {
                 continue;
             }
             boolean can = false;
-            for (int[] opt : remaining.get(j).options) {
+            boolean costShard = (need & COST_FLAG) != 0;
+            byte want = costShard ? (byte) (need & 0x7F) : need;
+            if (costShard && remaining.get(j).filterOut) {
+                continue;
+            }
+            boolean special = want == SNOW || want == ANY || want == CREATURE;
+            if (special) {
+                can = want == CREATURE ? remaining.get(j).fodder
+                        : !remaining.get(j).options.isEmpty() && (want == ANY || remaining.get(j).snow);
+            }
+            for (int[] opt : special ? java.util.Collections.<int[]>emptyList() : remaining.get(j).options) {
                 int ci = opt[0];
                 byte bit = ci >= 0 && ci < 5 ? (byte) (1 << ci) : 0;
-                if (need == 0 ? bit == 0 : (need & bit) != 0) {
+                if (want == 0 ? bit == 0 : (want & bit) != 0) {
                     can = true;
                     break;
                 }

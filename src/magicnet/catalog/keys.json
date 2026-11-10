@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "about": "Hand-curated registry of the property keys the Forge bridge emits on tokens, action options and records. Each component of a token is encoded as (key embedding, value repr); the key embedding is the frozen text embedding of `description`. Counter keys are expanded from counter_keys.json (generated from Forge by scripts/gen_counter_keys.py). tests/test_keys.py fails when the bridge emits a key that is not here. Layout (schema 9): `identity` and `ref` keys sit at the top level of a token next to `type`, `zone` and `edges`; every other key (number/flag/string/string_list) is nested under the token's `components` object, which is omitted when empty, and flags appear only when true. magicnet.bridge.Schema.isTopLevel implements this split and tests/test_schema.py checks it against this file. Action options and the record envelope are not tokens and stay flat. Schema 13: history tokens carry no refs; participants are edges (see magicnet.schema.RELATIONS) and closed-vocabulary components are `categorical` with a `vocab` named in magicnet.schema.VOCABS.",
+  "about": "Hand-curated registry of the property keys the Forge bridge emits on tokens, action options and records. Each component of a token is encoded as (key embedding, value repr); the key embedding is the frozen text embedding of `description`. Counter keys are expanded from counter_keys.json (generated from Forge by scripts/gen_counter_keys.py). tests/test_keys.py fails when the bridge emits a key that is not here. Layout (schema 9): `identity` and `ref` keys sit at the top level of a token next to `type`, `zone` and `edges`; every other key (number/flag/string/string_list) is nested under the token's `components` object, which is omitted when empty, and flags appear only when true. magicnet.bridge.Schema.isTopLevel implements this split and tests/test_schema.py checks it against this file. The record envelope is not a token and stays flat. Schema 16: decision option tokens (type action) and the prompt token (type decision) use the token layout; a candidate that references an existing token is just {\"ref\": id}. A categorical key may override its vocab per token type with `type_vocabs` (verb on action tokens: action_verb). Schema 13: history tokens carry no refs; participants are edges (see magicnet.schema.RELATIONS) and closed-vocabulary components are `categorical` with a `vocab` named in magicnet.schema.VOCABS.",
   "value_kinds": {
     "number": "integer value; encode numerically",
     "flag": "boolean",
@@ -11,105 +11,1149 @@
     "identity": "join key / token identity, not a component; top-level; never encoded as (key, value)"
   },
   "keys": [
-    {"key": "type", "description": "token type", "value_kind": "identity", "token_types": ["global", "player", "game_object", "library_card", "stack_item", "delayed_trigger", "history"], "notes": "Selects the encoder (schema.ENCODER_MAPPING); not a component."},
-    {"key": "zone", "description": "zone this object is in", "value_kind": "categorical", "vocab": "zone", "top_level": true, "token_types": ["game_object", "library_card", "stack_item", "delayed_trigger", "history"], "notes": "Values are magicnet.schema.ZONES (index with schema.zone_index). Stays at the token top level: it is also structural (sides, masking, segment embedding)."},
-    {"key": "edges", "description": "relations to other tokens", "value_kind": "identity", "token_types": ["game_object", "stack_item", "delayed_trigger", "history", "action"], "notes": "Resolved to relation-aware attention bias, not a component."},
-    {"key": "id", "description": "object id", "value_kind": "identity", "token_types": ["player", "game_object", "library_card", "stack_item", "history"], "notes": "Join key for edges; stripped by dump.strip_ids. On history tokens (schema 13): e<N>, the event's index in this viewer's history, which cause and affected_by edges point at. On hidden-region aggregates (schema 15): r:<zone> (r:opp_hand, r:opp_library, r:opp_sideboard), the join key of that region's hidden_truth label; face-down objects keep their card id."},
-    {"key": "name", "description": "name of this object", "value_kind": "string", "top_level": true, "token_types": ["game_object", "library_card"], "notes": "Embedded even when oracle_id is present: names are part of the rules grammar (\"cards named X\", \"with X in its name\"). Absent on an object the viewer cannot see (schema 12; per the rules an unseen or face-down card has no name), including the hidden-sideboard/library count aggregates; such tokens carry no oracle_id either. Test with magicnet.dump.is_hidden. Stays at the token top level for redaction checks. Phantoms (schema 13) carry the last-known name; an ability phantom carries its source's name."},
-    {"key": "oracle_id", "description": "card oracle id", "value_kind": "identity", "token_types": ["game_object", "library_card", "action"], "notes": "Join to the card catalog."},
-    {"key": "turn", "description": "turn number", "value_kind": "number", "token_types": ["global", "history", "record"], "notes": "On history tokens: the turn the event happened in (0 = pregame)."},
-    {"key": "phase", "description": "current phase and step of the turn", "value_kind": "categorical", "token_types": ["global", "record", "history"], "notes": "Forge PhaseType name (UNTAP ... CLEANUP), or NONE before the first turn (schema 13; was the string \"null\"). Values are magicnet.schema.PHASES.", "vocab": "phase"},
-    {"key": "active_is_viewer", "description": "it is my turn", "value_kind": "flag", "token_types": ["global"]},
-    {"key": "stack_size", "description": "number of spells and abilities on the stack", "value_kind": "number", "token_types": ["global"]},
-    {"key": "side", "description": "whose player this is: me or my opponent", "value_kind": "string", "token_types": ["player", "game_object"], "notes": "\"self\" or \"opp\". On a phantom (schema 13): whose object it was (controller)."},
-    {"key": "life", "description": "life total", "value_kind": "number", "token_types": ["player"]},
-    {"key": "lands_played", "description": "lands played this turn", "value_kind": "number", "token_types": ["player"]},
-    {"key": "state", "description": "which face or state of the card is showing", "value_kind": "string", "token_types": ["game_object"], "notes": "Forge CardStateName, e.g. Original, Transformed, Flipped, FaceDown."},
-    {"key": "tapped", "description": "tapped", "value_kind": "flag", "token_types": ["game_object"]},
-    {"key": "sick", "description": "summoning sick: came under my control this turn", "value_kind": "flag", "token_types": ["game_object"]},
-    {"key": "face_down", "description": "face down", "value_kind": "flag", "token_types": ["game_object", "history"], "notes": "On history (move events): the object was face down when it moved; public."},
-    {"key": "phased_out", "description": "phased out", "value_kind": "flag", "token_types": ["game_object"]},
-    {"key": "token", "description": "is a token rather than a card", "value_kind": "flag", "token_types": ["game_object"]},
-    {"key": "power", "description": "current power", "value_kind": "number", "token_types": ["game_object"]},
-    {"key": "toughness", "description": "current toughness", "value_kind": "number", "token_types": ["game_object"]},
-    {"key": "base_power", "description": "base power before pumps and counters", "value_kind": "number", "token_types": ["game_object"], "notes": "Schema 10. After copy effects and characteristic-defining/setting effects (layers 1, 7a-b); power minus base_power is the sum of modifiers."},
-    {"key": "base_toughness", "description": "base toughness before pumps and counters", "value_kind": "number", "token_types": ["game_object"], "notes": "Schema 10. Same layers as base_power."},
-    {"key": "damage", "description": "damage marked on this creature", "value_kind": "number", "token_types": ["game_object"]},
-    {"key": "types", "description": "current type line", "value_kind": "string", "token_types": ["game_object"], "notes": "Layer-resolved, e.g. \"Legendary Creature - Human Knight\"."},
-    {"key": "colors", "description": "current colors", "value_kind": "string_list", "token_types": ["game_object"], "notes": "Lowercased color names, or [\"colorless\"]."},
-    {"key": "gained", "description": "abilities this object has that are not printed on it", "value_kind": "string_list", "token_types": ["game_object"], "notes": "Schema 10. Engine-resolved difference from the printed card (oracle_id): keywords and triggered/activated/static/replacement abilities, incl. Forge hidden extrinsic keywords. Host-independent rules text (\"Trample\", \"This creature can't block.\"), sorted, deduplicated."},
-    {"key": "lost", "description": "printed abilities this object no longer has", "value_kind": "string_list", "token_types": ["game_object"], "notes": "Schema 10. \"Loses all abilities\" lists every printed ability lost, one entry each. Same text normalization as gained."},
-    {"key": "known_by_reveal", "description": "opponent's hidden card I know because it was revealed to me", "value_kind": "flag", "token_types": ["game_object"]},
-    {"key": "revealed", "description": "opponent's card that is currently revealed", "value_kind": "flag", "token_types": ["game_object"]},
-    {"key": "chosen_colors", "description": "colors chosen for this permanent", "value_kind": "string_list", "token_types": ["game_object"]},
-    {"key": "chosen_type", "description": "creature or card type chosen for this permanent", "value_kind": "string", "token_types": ["game_object"]},
-    {"key": "named_card", "description": "card name chosen for this permanent", "value_kind": "ref", "token_types": ["game_object"], "notes": "Names a card that need not be on the board; join via named_card_oracle_id to the card catalog (an edge to a card-catalog node rather than a token)."},
-    {"key": "named_card_oracle_id", "description": "oracle id of the chosen card name", "value_kind": "identity", "token_types": ["game_object"]},
-    {"key": "chosen_player", "description": "player chosen for this permanent", "value_kind": "ref", "token_types": ["game_object"], "notes": "Player ref (p0/p1). Should become an edge to the player token."},
-    {"key": "chosen_number", "description": "number chosen for this permanent", "value_kind": "number", "token_types": ["game_object"]},
-    {"key": "x_paid", "description": "value of X paid when this was cast", "value_kind": "number", "token_types": ["game_object", "history"], "notes": "On history (cast/copy_spell): X announced for the spell."},
-    {"key": "kicked", "description": "was kicked when cast", "value_kind": "flag", "token_types": ["game_object", "history"], "notes": "On history (cast/copy_spell): the spell was kicked."},
-    {"key": "blocked", "description": "attacking creature that has been blocked", "value_kind": "flag", "token_types": ["game_object"], "notes": "Sticky per CR 509.1h; kept as a property on purpose."},
-    {"key": "count", "description": "number of copies", "value_kind": "number", "token_types": ["library_card", "history"], "notes": "On library_card: copies in the aggregate (schema 13: also the opponent's unseen hand cards, zone opp_hand). On history: number of objects in a batched event (draw, move_zone, discard, create) when > 1; always on reveal."},
-    {"key": "depth_from_top", "description": "cards above this one in the library", "value_kind": "number", "token_types": ["library_card"]},
-    {"key": "depth_from_bottom", "description": "cards below this one in the library", "value_kind": "number", "token_types": ["library_card"]},
-    {"key": "depth_min", "description": "fewest cards that can be above this one in the library", "value_kind": "number", "token_types": ["library_card"]},
-    {"key": "depth_max", "description": "most cards that can be above this one in the library", "value_kind": "number", "token_types": ["library_card"]},
-    {"key": "arranged_pile", "description": "pile this card was assigned to earlier in the scry/surveil being decided", "value_kind": "string", "token_types": ["library_card"], "notes": "\"top\", \"bottom\" or \"graveyard\"; only present while the arrangement is in progress (the cards have not moved yet)."},
-    {"key": "arranged_rank", "description": "place already chosen for this card within its scry/surveil pile, counted from that pile's end of the library", "value_kind": "number", "token_types": ["library_card"], "notes": "0 = top of library for the top pile, bottommost for the bottom pile; only while the arrangement is in progress."},
-    {"key": "is_spell", "description": "is a spell", "value_kind": "flag", "token_types": ["stack_item"]},
-    {"key": "is_trigger", "description": "is a triggered ability", "value_kind": "flag", "token_types": ["stack_item", "game_object"], "notes": "On an ability phantom (schema 13): the ability that left the stack was a trigger."},
-    {"key": "source", "description": "source card", "value_kind": "ref", "token_types": ["stack_item", "delayed_trigger", "action"], "notes": "Card name of a stack item / delayed trigger / action option. Redundant with their source_is edge. Not on history since schema 13 (role edge source_is)."},
-    {"key": "source_oracle_id", "description": "oracle id of the source card", "value_kind": "identity", "token_types": ["stack_item", "delayed_trigger", "action"]},
-    {"key": "list", "description": "which delayed trigger list: this turn only or until it triggers", "value_kind": "string", "token_types": ["delayed_trigger"], "notes": "Forge field name: delayedTriggers or thisTurnDelayedTriggers."},
-    {"key": "attempt", "description": "casting attempt this event belongs to", "value_kind": "identity", "token_types": ["history"], "notes": "Tag used to drop rolled-back attempts' events; an id, not a feature."},
-    {"key": "ceased", "description": "this object ceased to exist", "value_kind": "flag", "token_types": ["game_object"], "notes": "Schema 14, phantoms only: true for a token that left the battlefield or a copy/ability that left the stack; absent on an identity phantom (a card the viewer lost track of, which still exists somewhere it cannot tell: \"a copy of X\")."},
-    {"key": "handles", "description": "tracking handles assigned to this token", "value_kind": "identity", "token_types": ["game_object", "library_card", "stack_item"], "notes": "Schema 13: the h<N> handles history edges point at that this token currently stands for (the object itself, the aggregate of the hidden zone it is in, the owner's untracked token, or a phantom). Each referenced handle is on exactly one token per state. Resolved by dump.resolve_edges; stripped by dump.strip_ids."},
-    {"key": "verb", "description": "what happened", "value_kind": "categorical", "vocab": "verb", "token_types": ["history"], "notes": "Schema 13; values magicnet.schema.HISTORY_VERBS. Replaces `event`."},
-    {"key": "step", "description": "which atomic game action this event was part of, counted from the start of the game", "value_kind": "number", "token_types": ["history"], "notes": "Schema 13: one step per resolution, cast/activation (with its costs), combat-damage batch, state-based-action check or turn-based action; events of one simultaneous batch share it. Counted per viewer over the events that viewer sees."},
-    {"key": "step_order", "description": "order of this event within its step", "value_kind": "number", "token_types": ["history"], "notes": "Schema 13; 0-based."},
-    {"key": "cause_kind", "description": "why this event happened", "value_kind": "categorical", "vocab": "cause_kind", "token_types": ["history"], "notes": "Schema 13, on every history token: pointer (a consequence of the events its cause edges point at), turn_based, state_based (may also carry a cause edge to the lethal damage), combat, pregame, player_action or unknown."},
-    {"key": "move_kind", "description": "how the object was moved", "value_kind": "categorical", "vocab": "move_kind", "token_types": ["history"], "notes": "Schema 13 move_zone: put, mill, exile, sacrifice, destroy, bounce, search, return or other."},
-    {"key": "reason", "description": "why the spell or ability did not resolve", "value_kind": "categorical", "vocab": "dnr_reason", "token_types": ["history"], "notes": "Schema 13 does_not_resolve: countered (cause edge: the counterspell's resolve), fizzled (all targets illegal), removed (left the stack otherwise)."},
-    {"key": "modes", "description": "modes chosen for the spell", "value_kind": "string_list", "token_types": ["history"], "notes": "Schema 13 cast/copy_spell/trigger: chosen mode texts, in choice order."},
-    {"key": "mana_spent_W", "description": "white mana spent on it", "value_kind": "number", "token_types": ["history"], "notes": "Schema 13 cast/activate/copy_spell; omitted when zero."},
-    {"key": "mana_spent_U", "description": "blue mana spent on it", "value_kind": "number", "token_types": ["history"]},
-    {"key": "mana_spent_B", "description": "black mana spent on it", "value_kind": "number", "token_types": ["history"]},
-    {"key": "mana_spent_R", "description": "red mana spent on it", "value_kind": "number", "token_types": ["history"]},
-    {"key": "mana_spent_G", "description": "green mana spent on it", "value_kind": "number", "token_types": ["history"]},
-    {"key": "mana_spent_C", "description": "colorless mana spent on it", "value_kind": "number", "token_types": ["history"]},
-    {"key": "before", "description": "value before the change", "value_kind": "number", "token_types": ["history"], "notes": "Schema 13: life (life_change), counter count (counters_change), designation 0/1 or speed (designation_change)."},
-    {"key": "after", "description": "value after the change", "value_kind": "number", "token_types": ["history"]},
-    {"key": "counter_type", "description": "kind of counter", "value_kind": "string", "token_types": ["history"], "notes": "Schema 13 counters_change: Forge counter name lowercased (+1/+1, loyalty, poison, lore ...), as in the ctr_<name> keys."},
-    {"key": "designation", "description": "which designation changed", "value_kind": "string", "token_types": ["history"], "notes": "Schema 13 designation_change: monarch, initiative, city's blessing, speed, day, night."},
-    {"key": "action_kind", "description": "kind of special action", "value_kind": "string", "token_types": ["history"], "notes": "Schema 13 special_action: turn_face_up, foretell, plot, unlock, or the Forge ability api lowercased (e.g. changezone for a companion)."},
-    {"key": "hand_size", "description": "cards in hand", "value_kind": "number", "token_types": ["history"], "notes": "Schema 13 mulligan."},
-    {"key": "n_top", "description": "cards left on top of the library", "value_kind": "number", "token_types": ["history"], "notes": "Schema 13 scry/surveil."},
-    {"key": "n_bottom", "description": "cards put on the bottom of the library", "value_kind": "number", "token_types": ["history"], "notes": "Schema 13 scry."},
-    {"key": "n_graveyard", "description": "cards put into the graveyard while surveilling", "value_kind": "number", "token_types": ["history"], "notes": "Schema 13 surveil."},
-    {"key": "outcome", "description": "how the casting attempt ended", "value_kind": "string", "token_types": ["history"], "notes": "attempt_end: committed, rolled_back, failed_unrolled or unknown."},
-    {"key": "reached", "description": "furthest step reached by the casting attempt", "value_kind": "string", "token_types": ["history"], "notes": "attempt_end: proposed, announce, targets or cost."},
-    {"key": "ability", "description": "ability that was used", "value_kind": "string", "token_types": ["history", "game_object"], "notes": "On history (activate, trigger): the ability's rules text (Forge description, object ids removed); unbounded vocabulary. On an ability phantom (schema 13): the text of the ability that left the stack."},
-    {"key": "amount", "description": "amount", "value_kind": "number", "token_types": ["history"], "notes": "deal_damage: damage dealt."},
-    {"key": "combat", "description": "combat damage", "value_kind": "flag", "token_types": ["history"], "notes": "deal_damage: combat damage."},
-    {"key": "from", "description": "zone it came from", "value_kind": "categorical", "token_types": ["history"], "notes": "Schema 13: history move/draw/discard/reveal: viewer-relative zone name from magicnet.schema.ZONES (e.g. opp_battlefield, stack). Omitted for a zone outside the vocabulary (created objects, Forge's None).", "vocab": "zone"},
-    {"key": "to", "description": "zone it went to", "value_kind": "categorical", "token_types": ["history"], "notes": "Schema 13: like `from`, the destination zone.", "vocab": "zone"},
-    {"key": "i", "description": "option index", "value_kind": "identity", "token_types": ["action"], "notes": "Position in the action pool; the pointer target, not a feature."},
-    {"key": "api", "description": "kind of action", "value_kind": "string", "token_types": ["action"], "notes": "Forge ApiType (e.g. PermanentCreature, Draw, DealDamage) or Pass."},
-    {"key": "mana", "description": "is a mana ability", "value_kind": "flag", "token_types": ["action"]},
-    {"key": "target_candidates", "description": "number of legal targets", "value_kind": "number", "token_types": ["action"]},
-    {"key": "desc", "description": "description of the action", "value_kind": "string", "token_types": ["action"], "notes": "Free text (ability text / choice label); unbounded vocabulary."},
-    {"key": "err", "description": "the action could not be described", "value_kind": "flag", "token_types": ["action"]},
-    {"key": "kind", "description": "kind of decision being asked", "value_kind": "string", "token_types": ["record"], "notes": "\"ability\" for priority, otherwise the routed callback (declare_attacker, ...). Record-level; not yet on any token."}
+    {
+      "key": "type",
+      "description": "token type",
+      "value_kind": "identity",
+      "token_types": [
+        "global",
+        "player",
+        "game_object",
+        "library_card",
+        "stack_item",
+        "delayed_trigger",
+        "history",
+        "action",
+        "decision"
+      ],
+      "notes": "Selects the encoder (schema.ENCODER_MAPPING); not a component. Schema 16: action = decision option token, decision = the record's prompt token."
+    },
+    {
+      "key": "zone",
+      "description": "zone this object is in",
+      "value_kind": "categorical",
+      "vocab": "zone",
+      "top_level": true,
+      "token_types": [
+        "game_object",
+        "library_card",
+        "stack_item",
+        "delayed_trigger",
+        "history"
+      ],
+      "notes": "Values are magicnet.schema.ZONES (index with schema.zone_index). Stays at the token top level: it is also structural (sides, masking, segment embedding)."
+    },
+    {
+      "key": "edges",
+      "description": "relations to other tokens",
+      "value_kind": "identity",
+      "token_types": [
+        "game_object",
+        "stack_item",
+        "delayed_trigger",
+        "history",
+        "action",
+        "decision"
+      ],
+      "notes": "Resolved to relation-aware attention bias, not a component."
+    },
+    {
+      "key": "id",
+      "description": "object id",
+      "value_kind": "identity",
+      "token_types": [
+        "player",
+        "game_object",
+        "library_card",
+        "stack_item",
+        "history",
+        "action",
+        "decision"
+      ],
+      "notes": "Join key for edges; stripped by dump.strip_ids. On history tokens (schema 13): e<N>, the event's index in this viewer's history, which cause and affected_by edges point at. On hidden-region aggregates (schema 15): r:<zone> (r:opp_hand, r:opp_library, r:opp_sideboard), the join key of that region's hidden_truth label; face-down objects keep their card id. Schema 16: own-library name aggregates carry n:<name> (the join key decision candidates reference); option tokens a<i> (i = candidate index); the prompt token q."
+    },
+    {
+      "key": "name",
+      "description": "name of this object",
+      "value_kind": "string",
+      "top_level": true,
+      "token_types": [
+        "game_object",
+        "library_card"
+      ],
+      "notes": "Embedded even when oracle_id is present: names are part of the rules grammar (\"cards named X\", \"with X in its name\"). Absent on an object the viewer cannot see (schema 12; per the rules an unseen or face-down card has no name), including the hidden-sideboard/library count aggregates; such tokens carry no oracle_id either. Test with magicnet.dump.is_hidden. Stays at the token top level for redaction checks. Phantoms (schema 13) carry the last-known name; an ability phantom carries its source's name."
+    },
+    {
+      "key": "oracle_id",
+      "description": "card oracle id",
+      "value_kind": "identity",
+      "token_types": [
+        "game_object",
+        "library_card"
+      ],
+      "notes": "Join to the card catalog."
+    },
+    {
+      "key": "turn",
+      "description": "turn number",
+      "value_kind": "number",
+      "token_types": [
+        "global",
+        "history",
+        "record"
+      ],
+      "notes": "On history tokens: the turn the event happened in (0 = pregame)."
+    },
+    {
+      "key": "phase",
+      "description": "current phase and step of the turn",
+      "value_kind": "categorical",
+      "token_types": [
+        "global",
+        "record",
+        "history"
+      ],
+      "notes": "Forge PhaseType name (UNTAP ... CLEANUP), or NONE before the first turn (schema 13; was the string \"null\"). Values are magicnet.schema.PHASES.",
+      "vocab": "phase"
+    },
+    {
+      "key": "active_is_viewer",
+      "description": "it is my turn",
+      "value_kind": "flag",
+      "token_types": [
+        "global"
+      ]
+    },
+    {
+      "key": "stack_size",
+      "description": "number of spells and abilities on the stack",
+      "value_kind": "number",
+      "token_types": [
+        "global"
+      ]
+    },
+    {
+      "key": "side",
+      "description": "whose player this is: me or my opponent",
+      "value_kind": "string",
+      "token_types": [
+        "player",
+        "game_object"
+      ],
+      "notes": "\"self\" or \"opp\". On a phantom (schema 13): whose object it was (controller)."
+    },
+    {
+      "key": "life",
+      "description": "life total",
+      "value_kind": "number",
+      "token_types": [
+        "player"
+      ]
+    },
+    {
+      "key": "lands_played",
+      "description": "lands played this turn",
+      "value_kind": "number",
+      "token_types": [
+        "player"
+      ]
+    },
+    {
+      "key": "state",
+      "description": "which face or state of the card is showing",
+      "value_kind": "string",
+      "token_types": [
+        "game_object"
+      ],
+      "notes": "Forge CardStateName, e.g. Original, Transformed, Flipped, FaceDown."
+    },
+    {
+      "key": "tapped",
+      "description": "tapped",
+      "value_kind": "flag",
+      "token_types": [
+        "game_object"
+      ]
+    },
+    {
+      "key": "sick",
+      "description": "summoning sick: came under my control this turn",
+      "value_kind": "flag",
+      "token_types": [
+        "game_object"
+      ]
+    },
+    {
+      "key": "face_down",
+      "description": "face down",
+      "value_kind": "flag",
+      "token_types": [
+        "game_object",
+        "history"
+      ],
+      "notes": "On history (move events): the object was face down when it moved; public."
+    },
+    {
+      "key": "phased_out",
+      "description": "phased out",
+      "value_kind": "flag",
+      "token_types": [
+        "game_object"
+      ]
+    },
+    {
+      "key": "token",
+      "description": "is a token rather than a card",
+      "value_kind": "flag",
+      "token_types": [
+        "game_object"
+      ]
+    },
+    {
+      "key": "power",
+      "description": "current power",
+      "value_kind": "number",
+      "token_types": [
+        "game_object"
+      ]
+    },
+    {
+      "key": "toughness",
+      "description": "current toughness",
+      "value_kind": "number",
+      "token_types": [
+        "game_object"
+      ]
+    },
+    {
+      "key": "base_power",
+      "description": "base power before pumps and counters",
+      "value_kind": "number",
+      "token_types": [
+        "game_object"
+      ],
+      "notes": "Schema 10. After copy effects and characteristic-defining/setting effects (layers 1, 7a-b); power minus base_power is the sum of modifiers."
+    },
+    {
+      "key": "base_toughness",
+      "description": "base toughness before pumps and counters",
+      "value_kind": "number",
+      "token_types": [
+        "game_object"
+      ],
+      "notes": "Schema 10. Same layers as base_power."
+    },
+    {
+      "key": "damage",
+      "description": "damage marked on this creature",
+      "value_kind": "number",
+      "token_types": [
+        "game_object"
+      ]
+    },
+    {
+      "key": "types",
+      "description": "current type line",
+      "value_kind": "string",
+      "token_types": [
+        "game_object"
+      ],
+      "notes": "Layer-resolved, e.g. \"Legendary Creature - Human Knight\"."
+    },
+    {
+      "key": "colors",
+      "description": "current colors",
+      "value_kind": "string_list",
+      "token_types": [
+        "game_object"
+      ],
+      "notes": "Lowercased color names, or [\"colorless\"]."
+    },
+    {
+      "key": "gained",
+      "description": "abilities this object has that are not printed on it",
+      "value_kind": "string_list",
+      "token_types": [
+        "game_object"
+      ],
+      "notes": "Schema 10. Engine-resolved difference from the printed card (oracle_id): keywords and triggered/activated/static/replacement abilities, incl. Forge hidden extrinsic keywords. Host-independent rules text (\"Trample\", \"This creature can't block.\"), sorted, deduplicated."
+    },
+    {
+      "key": "lost",
+      "description": "printed abilities this object no longer has",
+      "value_kind": "string_list",
+      "token_types": [
+        "game_object"
+      ],
+      "notes": "Schema 10. \"Loses all abilities\" lists every printed ability lost, one entry each. Same text normalization as gained."
+    },
+    {
+      "key": "known_by_reveal",
+      "description": "opponent's hidden card I know because it was revealed to me",
+      "value_kind": "flag",
+      "token_types": [
+        "game_object"
+      ]
+    },
+    {
+      "key": "revealed",
+      "description": "opponent's card that is currently revealed",
+      "value_kind": "flag",
+      "token_types": [
+        "game_object"
+      ]
+    },
+    {
+      "key": "chosen_colors",
+      "description": "colors chosen for this permanent",
+      "value_kind": "string_list",
+      "token_types": [
+        "game_object"
+      ]
+    },
+    {
+      "key": "chosen_type",
+      "description": "creature or card type chosen for this permanent",
+      "value_kind": "string",
+      "token_types": [
+        "game_object"
+      ]
+    },
+    {
+      "key": "named_card",
+      "description": "card name chosen for this permanent",
+      "value_kind": "ref",
+      "token_types": [
+        "game_object"
+      ],
+      "notes": "Names a card that need not be on the board; join via named_card_oracle_id to the card catalog (an edge to a card-catalog node rather than a token)."
+    },
+    {
+      "key": "named_card_oracle_id",
+      "description": "oracle id of the chosen card name",
+      "value_kind": "identity",
+      "token_types": [
+        "game_object"
+      ]
+    },
+    {
+      "key": "chosen_player",
+      "description": "player chosen for this permanent",
+      "value_kind": "ref",
+      "token_types": [
+        "game_object"
+      ],
+      "notes": "Player ref (p0/p1). Should become an edge to the player token."
+    },
+    {
+      "key": "chosen_number",
+      "description": "number chosen for this permanent",
+      "value_kind": "number",
+      "token_types": [
+        "game_object"
+      ]
+    },
+    {
+      "key": "x_paid",
+      "description": "value of X paid when this was cast",
+      "value_kind": "number",
+      "token_types": [
+        "game_object",
+        "history"
+      ],
+      "notes": "On history (cast/copy_spell): X announced for the spell."
+    },
+    {
+      "key": "kicked",
+      "description": "was kicked when cast",
+      "value_kind": "flag",
+      "token_types": [
+        "game_object",
+        "history"
+      ],
+      "notes": "On history (cast/copy_spell): the spell was kicked."
+    },
+    {
+      "key": "blocked",
+      "description": "attacking creature that has been blocked",
+      "value_kind": "flag",
+      "token_types": [
+        "game_object"
+      ],
+      "notes": "Sticky per CR 509.1h; kept as a property on purpose."
+    },
+    {
+      "key": "count",
+      "description": "number of copies",
+      "value_kind": "number",
+      "token_types": [
+        "library_card",
+        "history"
+      ],
+      "notes": "On library_card: copies in the aggregate (schema 13: also the opponent's unseen hand cards, zone opp_hand). On history: number of objects in a batched event (draw, move_zone, discard, create) when > 1; always on reveal."
+    },
+    {
+      "key": "depth_from_top",
+      "description": "cards above this one in the library",
+      "value_kind": "number",
+      "token_types": [
+        "library_card"
+      ]
+    },
+    {
+      "key": "depth_from_bottom",
+      "description": "cards below this one in the library",
+      "value_kind": "number",
+      "token_types": [
+        "library_card"
+      ]
+    },
+    {
+      "key": "depth_min",
+      "description": "fewest cards that can be above this one in the library",
+      "value_kind": "number",
+      "token_types": [
+        "library_card"
+      ]
+    },
+    {
+      "key": "depth_max",
+      "description": "most cards that can be above this one in the library",
+      "value_kind": "number",
+      "token_types": [
+        "library_card"
+      ]
+    },
+    {
+      "key": "arranged_pile",
+      "description": "pile this card was assigned to earlier in the scry/surveil being decided",
+      "value_kind": "string",
+      "token_types": [
+        "library_card"
+      ],
+      "notes": "\"top\", \"bottom\" or \"graveyard\"; only present while the arrangement is in progress (the cards have not moved yet)."
+    },
+    {
+      "key": "arranged_rank",
+      "description": "place already chosen for this card within its scry/surveil pile, counted from that pile's end of the library",
+      "value_kind": "number",
+      "token_types": [
+        "library_card"
+      ],
+      "notes": "0 = top of library for the top pile, bottommost for the bottom pile; only while the arrangement is in progress."
+    },
+    {
+      "key": "is_spell",
+      "description": "is a spell",
+      "value_kind": "flag",
+      "token_types": [
+        "stack_item"
+      ]
+    },
+    {
+      "key": "is_trigger",
+      "description": "is a triggered ability",
+      "value_kind": "flag",
+      "token_types": [
+        "stack_item",
+        "game_object"
+      ],
+      "notes": "On an ability phantom (schema 13): the ability that left the stack was a trigger."
+    },
+    {
+      "key": "source",
+      "description": "source card",
+      "value_kind": "ref",
+      "token_types": [
+        "stack_item",
+        "delayed_trigger"
+      ],
+      "notes": "Card name of a stack item / delayed trigger. Redundant with their source_is edge. Not on history since schema 13 (role edge source_is); not on options since schema 16 (source_is edge)."
+    },
+    {
+      "key": "source_oracle_id",
+      "description": "oracle id of the source card",
+      "value_kind": "identity",
+      "token_types": [
+        "stack_item",
+        "delayed_trigger"
+      ]
+    },
+    {
+      "key": "list",
+      "description": "which delayed trigger list: this turn only or until it triggers",
+      "value_kind": "string",
+      "token_types": [
+        "delayed_trigger"
+      ],
+      "notes": "Forge field name: delayedTriggers or thisTurnDelayedTriggers."
+    },
+    {
+      "key": "attempt",
+      "description": "casting attempt this event belongs to",
+      "value_kind": "identity",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Tag used to drop rolled-back attempts' events; an id, not a feature."
+    },
+    {
+      "key": "ceased",
+      "description": "this object ceased to exist",
+      "value_kind": "flag",
+      "token_types": [
+        "game_object"
+      ],
+      "notes": "Schema 14, phantoms only: true for a token that left the battlefield or a copy/ability that left the stack; absent on an identity phantom (a card the viewer lost track of, which still exists somewhere it cannot tell: \"a copy of X\")."
+    },
+    {
+      "key": "handles",
+      "description": "tracking handles assigned to this token",
+      "value_kind": "identity",
+      "token_types": [
+        "game_object",
+        "library_card",
+        "stack_item"
+      ],
+      "notes": "Schema 13: the h<N> handles history edges point at that this token currently stands for (the object itself, the aggregate of the hidden zone it is in, the owner's untracked token, or a phantom). Each referenced handle is on exactly one token per state. Resolved by dump.resolve_edges; stripped by dump.strip_ids."
+    },
+    {
+      "key": "verb",
+      "description": "what happened",
+      "value_kind": "categorical",
+      "vocab": "verb",
+      "token_types": [
+        "history",
+        "action"
+      ],
+      "notes": "Schema 13; values magicnet.schema.HISTORY_VERBS. Replaces `event`. Schema 16, on an option token (type action): vocab action_verb (magicnet.schema.ACTION_VERBS), e.g. cast, pass, no_attack, scry_top. Schema 17: activate_mana, use_pool, pay_life (pay_mana), convoke, improvise (pay_convoke). Schema 18: optional_cost (choose_optional_cost, choose_additional_cost), choose_color (pay_mana_combo), waterbend (pay_convoke).",
+      "type_vocabs": {
+        "action": "action_verb"
+      }
+    },
+    {
+      "key": "step",
+      "description": "which atomic game action this event was part of, counted from the start of the game",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13: one step per resolution, cast/activation (with its costs), combat-damage batch, state-based-action check or turn-based action; events of one simultaneous batch share it. Counted per viewer over the events that viewer sees."
+    },
+    {
+      "key": "step_order",
+      "description": "order of this event within its step",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13; 0-based."
+    },
+    {
+      "key": "cause_kind",
+      "description": "why this event happened",
+      "value_kind": "categorical",
+      "vocab": "cause_kind",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13, on every history token: pointer (a consequence of the events its cause edges point at), turn_based, state_based (may also carry a cause edge to the lethal damage), combat, pregame, player_action or unknown."
+    },
+    {
+      "key": "move_kind",
+      "description": "how the object was moved",
+      "value_kind": "categorical",
+      "vocab": "move_kind",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13 move_zone: put, mill, exile, sacrifice, destroy, bounce, search, return or other."
+    },
+    {
+      "key": "reason",
+      "description": "why the spell or ability did not resolve",
+      "value_kind": "categorical",
+      "vocab": "dnr_reason",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13 does_not_resolve: countered (cause edge: the counterspell's resolve), fizzled (all targets illegal), removed (left the stack otherwise)."
+    },
+    {
+      "key": "modes",
+      "description": "modes chosen for the spell",
+      "value_kind": "string_list",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13 cast/copy_spell/trigger: chosen mode texts, in choice order."
+    },
+    {
+      "key": "mana_spent_W",
+      "description": "white mana spent on it",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13 cast/activate/copy_spell; omitted when zero."
+    },
+    {
+      "key": "mana_spent_U",
+      "description": "blue mana spent on it",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ]
+    },
+    {
+      "key": "mana_spent_B",
+      "description": "black mana spent on it",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ]
+    },
+    {
+      "key": "mana_spent_R",
+      "description": "red mana spent on it",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ]
+    },
+    {
+      "key": "mana_spent_G",
+      "description": "green mana spent on it",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ]
+    },
+    {
+      "key": "mana_spent_C",
+      "description": "colorless mana spent on it",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ]
+    },
+    {
+      "key": "before",
+      "description": "value before the change",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13: life (life_change), counter count (counters_change), designation 0/1 or speed (designation_change)."
+    },
+    {
+      "key": "after",
+      "description": "value after the change",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ]
+    },
+    {
+      "key": "counter_type",
+      "description": "kind of counter",
+      "value_kind": "string",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13 counters_change: Forge counter name lowercased (+1/+1, loyalty, poison, lore ...), as in the ctr_<name> keys."
+    },
+    {
+      "key": "designation",
+      "description": "which designation changed",
+      "value_kind": "string",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13 designation_change: monarch, initiative, city's blessing, speed, day, night."
+    },
+    {
+      "key": "action_kind",
+      "description": "kind of special action",
+      "value_kind": "string",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13 special_action: turn_face_up, foretell, plot, unlock, or the Forge ability api lowercased (e.g. changezone for a companion)."
+    },
+    {
+      "key": "hand_size",
+      "description": "cards in hand",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13 mulligan."
+    },
+    {
+      "key": "n_top",
+      "description": "cards left on top of the library",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13 scry/surveil."
+    },
+    {
+      "key": "n_bottom",
+      "description": "cards put on the bottom of the library",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13 scry."
+    },
+    {
+      "key": "n_graveyard",
+      "description": "cards put into the graveyard while surveilling",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13 surveil."
+    },
+    {
+      "key": "outcome",
+      "description": "how the casting attempt ended",
+      "value_kind": "string",
+      "token_types": [
+        "history"
+      ],
+      "notes": "attempt_end: committed, rolled_back, failed_unrolled or unknown."
+    },
+    {
+      "key": "reached",
+      "description": "furthest step reached by the casting attempt",
+      "value_kind": "string",
+      "token_types": [
+        "history"
+      ],
+      "notes": "attempt_end: proposed, announce, targets or cost."
+    },
+    {
+      "key": "ability",
+      "description": "ability that was used",
+      "value_kind": "string",
+      "token_types": [
+        "history",
+        "game_object",
+        "action",
+        "decision"
+      ],
+      "notes": "On history (activate, trigger): the ability's rules text (Forge description, object ids removed); unbounded vocabulary. On an ability phantom (schema 13): the text of the ability that left the stack. Schema 16, on an option token: the ability's normalized rules text (host's own name -> this creature/permanent/spell, no ids, bracketed context or player names; never empty) for cast/activate/play_land/confirm/mode/order_next. On the prompt: the asking ability's text when it has no token (its stack_object edge does not resolve). Schema 17: on an activate_mana option, the mana ability's text (riders such as Cavern of Souls' \"can't be countered\" are part of it)."
+    },
+    {
+      "key": "amount",
+      "description": "amount",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ],
+      "notes": "deal_damage: damage dealt."
+    },
+    {
+      "key": "combat",
+      "description": "combat damage",
+      "value_kind": "flag",
+      "token_types": [
+        "history"
+      ],
+      "notes": "deal_damage: combat damage."
+    },
+    {
+      "key": "from",
+      "description": "zone it came from",
+      "value_kind": "categorical",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13: history move/draw/discard/reveal: viewer-relative zone name from magicnet.schema.ZONES (e.g. opp_battlefield, stack). Omitted for a zone outside the vocabulary (created objects, Forge's None).",
+      "vocab": "zone"
+    },
+    {
+      "key": "to",
+      "description": "zone it went to",
+      "value_kind": "categorical",
+      "token_types": [
+        "history"
+      ],
+      "notes": "Schema 13: like `from`, the destination zone.",
+      "vocab": "zone"
+    },
+    {
+      "key": "target_candidates",
+      "description": "number of legal targets",
+      "value_kind": "number",
+      "token_types": [
+        "action"
+      ],
+      "notes": "Schema 16 option token (cast/activate): legal targets (players and cards) of the ability, getAllCandidates(sa, false); absent when it does not target."
+    },
+    {
+      "key": "kind",
+      "description": "kind of decision being asked",
+      "value_kind": "categorical",
+      "vocab": "decision_kind",
+      "token_types": [
+        "record",
+        "decision"
+      ],
+      "notes": "\"ability\" for priority, otherwise the routed callback (declare_attacker, ...); values magicnet.schema.DECISION_KINDS. Schema 16: also the prompt token's component. Schema 17: pay_mana, pay_convoke, pay_delve (-Dmagicnet.payment). Schema 18: pay_sacrifice, pay_discard, pay_exile, pay_tap, pay_untap, pay_return, pay_reveal, choose_optional_cost, choose_additional_cost, pay_mana_combo."
+    },
+    {
+      "key": "mana_ability",
+      "description": "is a mana ability",
+      "value_kind": "flag",
+      "token_types": [
+        "action"
+      ],
+      "notes": "Schema 16: option token of a priority decision whose ability is a mana ability."
+    },
+    {
+      "key": "cost",
+      "description": "cost to pay",
+      "value_kind": "string",
+      "token_types": [
+        "action",
+        "decision"
+      ],
+      "notes": "Schema 16: the pay option of a pay_unless decision, e.g. \"{3}\" or \"2 life\" (normalized; no leading \"Pay\"). Schema 17: the pay_life option of a pay_mana decision, \"2 life\". Schema 18: on an optional_cost option, the optional/keyword/additional cost (e.g. \"{R}\", \"Sacrifice a creature with power 2 or greater\"); on an activate_mana option, the mana ability's own mana cost (filters, Signets); on the prompt of a pay_sacrifice/pay_discard/pay_exile/pay_tap/pay_untap/pay_return/pay_reveal decision, the cost part being paid (\"Sacrifice a creature\", \"Crew 1\", \"Emerge\")."
+    },
+    {
+      "key": "value",
+      "description": "the number chosen",
+      "value_kind": "number",
+      "token_types": [
+        "action"
+      ],
+      "notes": "Schema 16: option token of a choose_number decision. Schema 18: on an optional_cost option of a multikicker/replicate/squad decision, how many times the cost is paid."
+    },
+    {
+      "key": "prompt_text",
+      "description": "what the game asks the player",
+      "value_kind": "string",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 16: Forge's prompt/title for the decision (object ids, bracketed context and player names removed); omitted when Forge gives none."
+    },
+    {
+      "key": "min",
+      "description": "fewest choices allowed",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 16: minimum targets (choose_target), modes (choose_mode) or number (choose_number)."
+    },
+    {
+      "key": "max",
+      "description": "most choices allowed",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 16: maximum targets, modes or number."
+    },
+    {
+      "key": "optional",
+      "description": "choosing nothing is allowed",
+      "value_kind": "flag",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 16: a choose_nothing option is offered. Schema 17: on pay_convoke / pay_delve, stopping (choose_nothing) is offered because the rest is payable from mana sources."
+    },
+    {
+      "key": "selected_count",
+      "description": "how many have already been chosen in this decision",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 16: earlier steps of the same decomposed decision (attackers/blockers declared so far, targets already chosen, cards already placed, triggers already ordered); those with a token are also selected edges. Schema 17: pay_mana -- sources already tapped for this cost; pay_convoke / pay_delve -- cards already chosen."
+    },
+    {
+      "key": "ref",
+      "description": "token this candidate refers to",
+      "value_kind": "identity",
+      "token_types": [
+        "candidate"
+      ],
+      "notes": "Schema 16: a decision candidate {\"ref\": id-or-handle} that IS an existing token (target, defender, attacker to block, library-search pick via its n:<name> aggregate). Resolved by dump.resolve_candidates; never embedded."
+    },
+    {
+      "key": "remaining_cost",
+      "description": "mana cost still to pay",
+      "value_kind": "string",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17 (pay_mana, pay_convoke, pay_delve): the unpaid part of the cost being paid, Forge's mana symbols, e.g. \"{1}{U}\", \"{1}{B/P}{B/P}\", \"{G/W}\"."
+    },
+    {
+      "key": "remaining_generic",
+      "description": "generic mana still to pay",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17: unpaid generic mana of the cost being paid; absent when 0."
+    },
+    {
+      "key": "remaining_power",
+      "description": "creature power still to tap",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 18 (pay_tap for crew-style costs, \"tap creatures with total power N\"): power still needed beyond the creatures already chosen; absent when 0."
+    },
+    {
+      "key": "remaining_W",
+      "description": "unpaid white mana symbols",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17: unpaid shards of the cost being paid that white mana can pay (a hybrid shard counts under each of its colours, a Phyrexian shard under its colour); absent when 0."
+    },
+    {
+      "key": "remaining_U",
+      "description": "unpaid blue mana symbols",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17: unpaid shards of the cost being paid that blue mana can pay (a hybrid shard counts under each of its colours, a Phyrexian shard under its colour); absent when 0."
+    },
+    {
+      "key": "remaining_B",
+      "description": "unpaid black mana symbols",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17: unpaid shards of the cost being paid that black mana can pay (a hybrid shard counts under each of its colours, a Phyrexian shard under its colour); absent when 0."
+    },
+    {
+      "key": "remaining_R",
+      "description": "unpaid red mana symbols",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17: unpaid shards of the cost being paid that red mana can pay (a hybrid shard counts under each of its colours, a Phyrexian shard under its colour); absent when 0."
+    },
+    {
+      "key": "remaining_G",
+      "description": "unpaid green mana symbols",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17: unpaid shards of the cost being paid that green mana can pay (a hybrid shard counts under each of its colours, a Phyrexian shard under its colour); absent when 0."
+    },
+    {
+      "key": "remaining_C",
+      "description": "unpaid colorless mana symbols",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17: unpaid shards of the cost being paid that colorless mana can pay (a hybrid shard counts under each of its colours, a Phyrexian shard under its colour); absent when 0."
+    },
+    {
+      "key": "spent_W",
+      "description": "white mana already spent on this cost",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17 (pay_mana): mana already paid into this cost, by colour; absent when 0."
+    },
+    {
+      "key": "spent_U",
+      "description": "blue mana already spent on this cost",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17 (pay_mana): mana already paid into this cost, by colour; absent when 0."
+    },
+    {
+      "key": "spent_B",
+      "description": "black mana already spent on this cost",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17 (pay_mana): mana already paid into this cost, by colour; absent when 0."
+    },
+    {
+      "key": "spent_R",
+      "description": "red mana already spent on this cost",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17 (pay_mana): mana already paid into this cost, by colour; absent when 0."
+    },
+    {
+      "key": "spent_G",
+      "description": "green mana already spent on this cost",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17 (pay_mana): mana already paid into this cost, by colour; absent when 0."
+    },
+    {
+      "key": "spent_C",
+      "description": "colorless mana already spent on this cost",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17 (pay_mana): mana already paid into this cost, by colour; absent when 0."
+    },
+    {
+      "key": "spent_snow",
+      "description": "snow mana already spent on this cost",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17 (pay_mana): how much of the mana already paid into this cost was snow; absent when 0."
+    },
+    {
+      "key": "life_paid",
+      "description": "life already paid for Phyrexian mana in this cost",
+      "value_kind": "number",
+      "token_types": [
+        "decision"
+      ],
+      "notes": "Schema 17 (pay_mana): life committed to Phyrexian shards so far (taken when the cost is fully paid); absent when 0."
+    },
+    {
+      "key": "mana_color",
+      "description": "colour of mana",
+      "value_kind": "categorical",
+      "vocab": "mana_color",
+      "token_types": [
+        "action"
+      ],
+      "notes": "Schema 17: the colour an activate_mana option tells the ability to make, or a use_pool option spends; values magicnet.schema.MANA_COLORS (C = colourless). Schema 18: the colour a choose_color option (pay_mana_combo) adds."
+    },
+    {
+      "key": "mana_amount",
+      "description": "amount of mana",
+      "value_kind": "number",
+      "token_types": [
+        "action"
+      ],
+      "notes": "Schema 17: mana one activation adds (activate_mana), or units of identical mana floating (use_pool)."
+    },
+    {
+      "key": "restricted",
+      "description": "mana that may only be spent on some spells",
+      "value_kind": "flag",
+      "token_types": [
+        "action"
+      ],
+      "notes": "Schema 17: use_pool option of restricted pool mana (it can pay this spell, or it would not be offered)."
+    },
+    {
+      "key": "snow",
+      "description": "snow mana",
+      "value_kind": "flag",
+      "token_types": [
+        "action"
+      ],
+      "notes": "Schema 17: use_pool option of snow mana."
+    },
+    {
+      "key": "rider",
+      "description": "what spending this mana does besides paying",
+      "value_kind": "string",
+      "token_types": [
+        "action"
+      ],
+      "notes": "Schema 17: use_pool option of pool mana whose spending changes the spell or triggers (Cavern of Souls: can't be countered; mana that grants counters or keywords): the normalized text of the ability that made it. Each such unit is its own option."
+    },
+    {
+      "key": "pays",
+      "description": "mana symbol this tap pays",
+      "value_kind": "string",
+      "token_types": [
+        "action"
+      ],
+      "notes": "Schema 17 (pay_convoke): the shard a convoke/improvise option pays, e.g. \"{G}\" or \"{1}\"."
+    }
   ],
   "patterns": [
-    {"pattern": "ctr_{name}", "description": "{name} counters", "value_kind": "number", "token_types": ["game_object", "player"], "expand": "forge_counters", "java": ["\"ctr_\"+e.getElement().getName().toLowerCase()"], "notes": "Expanded concretely from counter_keys.json; an unseen counter still gets \"<name> counters\"."},
-    {"pattern": "announce_{what}", "description": "announced value of {what}", "value_kind": "number", "token_types": ["history"], "java": ["\"announce_\"+e.getKey()"], "notes": "AttemptEnd: values announced while casting (X, multikicker count, ...)."}
+    {
+      "pattern": "ctr_{name}",
+      "description": "{name} counters",
+      "value_kind": "number",
+      "token_types": [
+        "game_object",
+        "player"
+      ],
+      "expand": "forge_counters",
+      "java": [
+        "\"ctr_\"+e.getElement().getName().toLowerCase()"
+      ],
+      "notes": "Expanded concretely from counter_keys.json; an unseen counter still gets \"<name> counters\"."
+    },
+    {
+      "pattern": "announce_{what}",
+      "description": "announced value of {what}",
+      "value_kind": "number",
+      "token_types": [
+        "history"
+      ],
+      "java": [
+        "\"announce_\"+e.getKey()"
+      ],
+      "notes": "AttemptEnd: values announced while casting (X, multikicker count, ...)."
+    }
   ],
-  "role_java_exprs": ["m.getKey()"],
+  "role_java_exprs": [
+    "m.getKey()"
+  ],
   "role_java_exprs_about": "Dynamic key expressions allowed without a pattern. Schema 13: m.getKey() is GameHistory.append copying a history record's modifier map onto the token; those keys are scanned where HistoryHub writes them (r.mods.put). History participants are edges (magicnet.schema.RELATIONS), not role-named keys.",
-  "record_fields": ["schema", "game", "decision", "viewer", "kind", "turn", "phase", "hist_total", "hist_from", "hist_new", "state", "actions", "chosen", "chosen_match", "hidden_truth"],
+  "record_fields": [
+    "schema",
+    "game",
+    "decision",
+    "viewer",
+    "kind",
+    "turn",
+    "phase",
+    "hist_total",
+    "hist_from",
+    "hist_new",
+    "state",
+    "prompt",
+    "actions",
+    "chosen",
+    "chosen_match",
+    "hidden_truth"
+  ],
   "record_fields_about": "Serializer's decision-record envelope. Not token components, except kind/turn/phase which are registered keys (turn and phase duplicate the global token). hidden_truth (schema 15, dump only, -Dmagicnet.labels=true) is a training-only TARGET, never a model input; its entries use label_fields.",
-  "label_fields": ["region", "cards", "total", "oracle_id", "name", "count"],
+  "label_fields": [
+    "region",
+    "cards",
+    "total",
+    "oracle_id",
+    "name",
+    "count"
+  ],
   "label_fields_about": "Fields of a hidden_truth label: {region: id of the hidden-region state token it labels, cards: [{oracle_id, name, count}], total}. Belief-model targets only; never embedded as inputs."
 }

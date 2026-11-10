@@ -40,6 +40,12 @@ class KeyEntry:
     pattern: str | None = None  # family this key was expanded from / matched by
     vocab: str | None = None  # categorical: name of the closed vocabulary its values come from
     top_level: bool = False  # emitted at the token's top level although it is a component
+    # categorical: (token type, vocab) overrides of ``vocab`` (schema 16: verb on action tokens)
+    type_vocabs: tuple[tuple[str, str], ...] = ()
+
+    def vocab_for(self, token_type: str | None) -> str | None:
+        """The vocabulary of this key's values on a token of *token_type*."""
+        return dict(self.type_vocabs).get(token_type, self.vocab)
 
     @property
     def embedded(self) -> bool:
@@ -49,7 +55,8 @@ class KeyEntry:
     def meta(self) -> dict:
         return {k: v for k, v in (("notes", self.notes), ("alt_value_kinds", list(self.alt_value_kinds)),
                                    ("pattern", self.pattern), ("vocab", self.vocab),
-                                   ("top_level", self.top_level)) if v}
+                                   ("top_level", self.top_level),
+                                   ("type_vocabs", dict(self.type_vocabs))) if v}
 
     def to_json(self) -> dict:
         return {"key": self.key, "description": self.description, "value_kind": self.value_kind,
@@ -172,9 +179,12 @@ def load_registry(keys_path: Path = KEYS_PATH, counters_path: Path = COUNTERS_PA
             raise ValueError(f"duplicate key {k['key']!r} in {keys_path}")
         if (k["value_kind"] == "categorical") != ("vocab" in k):
             raise ValueError(f"{k['key']}: categorical keys (and only they) must name a vocab")
+        if "type_vocabs" in k and k["value_kind"] != "categorical":
+            raise ValueError(f"{k['key']}: only categorical keys may have type_vocabs")
         keys[k["key"]] = KeyEntry(k["key"], k["description"], k["value_kind"], tuple(k["token_types"]),
                                   k.get("notes", ""), tuple(k.get("alt_value_kinds", ())),
-                                  vocab=k.get("vocab"), top_level=bool(k.get("top_level", False)))
+                                  vocab=k.get("vocab"), top_level=bool(k.get("top_level", False)),
+                                  type_vocabs=tuple(sorted(k.get("type_vocabs", {}).items())))
     patterns = []
     for p in raw["patterns"]:
         _check(p["value_kind"], p["pattern"])
@@ -206,7 +216,8 @@ def registry_from_rows(rows: list[dict]) -> Registry:
     keys = {
         r["key"]: KeyEntry(r["key"], r["description"], r["value_kind"], tuple(r["token_types"]),
                            r.get("notes", ""), tuple(r.get("alt_value_kinds", ())), r.get("pattern"),
-                           r.get("vocab"), bool(r.get("top_level", False)))
+                           r.get("vocab"), bool(r.get("top_level", False)),
+                           tuple(sorted(r.get("type_vocabs", {}).items())))
         for r in rows if not r["is_pattern"]
     }
     patterns = [

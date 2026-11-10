@@ -154,6 +154,11 @@ public final class Harness {
         DecisionLog.printTwoStageProbe();
         DecisionLog.printChosenInPool();
         InstrumentedController.printCensus();
+        ManaPayment.printSummary();
+        if (InstrumentedController.ENGINE_UNPLAYABLE.get() > 0) {
+            System.out.println("engine path: unactivatable abilities refused: "
+                    + InstrumentedController.ENGINE_UNPLAYABLE.get());
+        }
         Serializer.printSummary();
         InstrumentedController.ACTIONS.printSummary();
         InstrumentedController.ACTIONS.close();

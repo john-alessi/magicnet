@@ -184,6 +184,12 @@ public final class Schema {
      * history resolve event whose continuous effect is still applied to it.
      */
     public static final String AFFECTED_BY = "affected_by";
+    /**
+     * Schema 16. Decision prompt -> tokens already chosen earlier in the same
+     * decomposed decision: attackers/blockers declared so far, targets already
+     * picked for the same ability, cards already placed in this scry/surveil.
+     */
+    public static final String SELECTED = "selected";
 
     private static final String[] TARGET_SLOTS = {TARGET_0, TARGET_1, TARGET_2, TARGET_3};
 
@@ -223,6 +229,7 @@ public final class Schema {
         out.add(CAUSE);
         out.add(REPLACED_BY);
         out.add(AFFECTED_BY);
+        out.add(SELECTED);
         return out;
     }
 
@@ -251,6 +258,45 @@ public final class Schema {
      */
     public static final List<String> CAUSE_KINDS = Collections.unmodifiableList(Arrays.asList(
             "pointer", "turn_based", "state_based", "combat", "pregame", "player_action", "unknown"));
+
+    /**
+     * Schema 16. {@code verb} of a decision option token (type {@code action},
+     * vocab {@code action_verb}). Closed: one per kind of option a routed
+     * decision offers that is not a reference to an existing token.
+     * {@code attack}, {@code block} and {@code choose_object} are fallbacks for
+     * an object choice whose object has no token the viewer can see.
+     */
+    public static final List<String> ACTION_VERBS = Collections.unmodifiableList(Arrays.asList(
+            "pass", "cast", "activate", "play_land", "attack", "no_attack", "block", "no_block",
+            "choose_nothing", "choose_object", "confirm", "decline", "pay", "mode", "number",
+            "scry_top", "scry_bottom", "surveil_top", "surveil_graveyard", "order_next",
+            // schema 17: mana payment steps (pay_mana)
+            "activate_mana", "use_pool", "pay_life", "convoke", "improvise",
+            // schema 18: optional/additional costs, combination mana colours, waterbend
+            "optional_cost", "choose_color", "waterbend"));
+
+    /**
+     * Schema 16. Decision kinds: the record's {@code kind} and the prompt
+     * token's {@code kind} component (vocab {@code decision_kind}).
+     */
+    public static final List<String> DECISION_KINDS = Collections.unmodifiableList(Arrays.asList(
+            "ability", "declare_attacker", "declare_blocker", "choose_entity", "choose_companion",
+            "choose_card_zone_change", "choose_number", "confirm_trigger", "confirm_action",
+            "choose_mode", "pay_unless", "scry", "surveil", "order_top", "order_bottom",
+            "order_triggers", "choose_target",
+            // schema 17: -Dmagicnet.payment
+            "pay_mana", "pay_convoke", "pay_delve",
+            // schema 18: non-mana cost parts, optional costs, combination mana
+            "pay_sacrifice", "pay_discard", "pay_exile", "pay_tap", "pay_untap", "pay_return",
+            "pay_reveal", "choose_optional_cost", "choose_additional_cost", "pay_mana_combo"));
+
+    /**
+     * Schema 17. {@code mana_color} of a payment option (vocab {@code mana_color}):
+     * the colour an {@code activate_mana} option adds or a {@code use_pool}
+     * option spends; C is colourless.
+     */
+    public static final List<String> MANA_COLORS = Collections.unmodifiableList(Arrays.asList(
+            "W", "U", "B", "R", "G", "C"));
 
     /** Value of {@code phase} when Forge has no current phase (before the first turn). */
     public static final String NO_PHASE = "NONE";
@@ -289,6 +335,8 @@ public final class Schema {
         out.add("delayed_trigger");
         out.add("action");
         out.add(HISTORY);
+        // Schema 16: the record's decision prompt token.
+        out.add("decision");
         return out;
     }
 
@@ -311,7 +359,9 @@ public final class Schema {
     public static final Set<String> TOP_LEVEL_KEYS = Collections.unmodifiableSet(new LinkedHashSet<>(Arrays.asList(
             "type", "zone", "edges",
             // identity
-            "id", "name", "oracle_id", "source_oracle_id", "named_card_oracle_id", "attempt", "i", "handles",
+            "id", "name", "oracle_id", "source_oracle_id", "named_card_oracle_id", "attempt", "handles",
+            // schema 16: a decision candidate referencing an existing token
+            "ref",
             // ref
             "source", "named_card", "chosen_player")));
 
@@ -392,6 +442,12 @@ public final class Schema {
         appendAll(sb, phases());
         sb.append("],\"zone\":[");
         appendAll(sb, zoneNames());
+        sb.append("],\"action_verb\":[");
+        appendAll(sb, ACTION_VERBS);
+        sb.append("],\"decision_kind\":[");
+        appendAll(sb, DECISION_KINDS);
+        sb.append("],\"mana_color\":[");
+        appendAll(sb, MANA_COLORS);
         sb.append("]}");
         sb.append(",\"components\":\"").append(COMPONENTS);
         sb.append("\",\"top_level\":{\"keys\":[");

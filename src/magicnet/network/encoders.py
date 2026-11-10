@@ -1,7 +1,37 @@
 import torch
 from .constants import *
 from ..schema import ZONES
-from .attention import RelationalAttentionBlock, PooledAttention
+from .attention import RelationalAttentionBlock, PooledAttention, RelationalCrossAttentionBlock
+
+class DecisionEncoder(torch.nn.Module):
+    def __init__(
+        self,
+        n_blocks: int,
+    ):
+        super().__init__()
+        self.action_encoder = ComponentSetEncoder()
+        self.relation_encoder = RelationEncoder()
+        self.transformer_blocks = torch.nn.ModuleList([
+            RelationalCrossAttentionBlock() for _ in range(n_blocks)
+        ])
+
+    def forward(
+        self,
+        game_state: dict,
+        emb_cache: torch.Tensor,
+        policy_state: torch.Tensor,
+        policy_mask: torch.Tensor,
+    ):
+        if game_state['actions']['num_tokens'] == 0: # choices are all refs in all batches
+            batches, mask = None, None
+        else:
+            tokens = self.action_encoder(game_state['actions'], emb_cache)
+            edge_emb, edge_pairs = self.relation_encoder(game_state['action_edges'])
+            batches, mask = batch_tokens(tokens, game_state['decode_batch_indices'], game_state['decode_batch_dim'])
+            for attn in self.transformer_blocks:
+                batches = attn(batches, mask, policy_state, policy_mask, edge_emb, edge_pairs)
+        
+        return batches, mask
 
 class GameStateEncoder(torch.nn.Module):
     def __init__(
@@ -33,21 +63,10 @@ class GameStateEncoder(torch.nn.Module):
                 hidden_card_component_key),
         ), dim=0)
         edge_emb, edge_pairs = self.relation_encoder(game_state['edges'])
-        batches, mask = self.batch_tokens(tokens, game_state['batch_indices'], game_state['batch_dim'])
+        batches, mask = batch_tokens(tokens, game_state['batch_indices'], game_state['batch_dim'])
         for attn in self.transformer_blocks:
             batches = attn(batches, mask, edge_emb, edge_pairs)
-        return batches
-
-    def batch_tokens(self, tokens, batch_indices, batch_dim):
-        order = torch.argsort(batch_indices, stable=True)
-        counts = torch.bincount(batch_indices, minlength=batch_dim[0])
-        start_indices = torch.cumsum(counts, dim=0) - counts
-        positions = torch.arange(len(batch_indices)) - start_indices[batch_indices[order]]
-        padded = tokens.new_zeros(batch_dim)
-        padded[batch_indices[order], positions] = tokens[order]
-        mask = torch.ones(*batch_dim[:-1], dtype=torch.bool)
-        mask[batch_indices[order], positions] = False
-        return padded, mask
+        return batches, mask
 
 class RelationEncoder(torch.nn.Module):
     def __init__(
@@ -255,3 +274,14 @@ class ManaCostEncoder(torch.nn.Module):
     def forward(self, mana: str):
         # accepts mana in scryfall format
         raise NotImplementedError
+
+def batch_tokens(tokens, batch_indices, batch_dim):
+    order = torch.argsort(batch_indices, stable=True)
+    counts = torch.bincount(batch_indices, minlength=batch_dim[0])
+    start_indices = torch.cumsum(counts, dim=0) - counts
+    positions = torch.arange(len(batch_indices)) - start_indices[batch_indices[order]]
+    padded = tokens.new_zeros(batch_dim)
+    padded[batch_indices[order], positions] = tokens[order]
+    mask = torch.ones(*batch_dim[:-1], dtype=torch.bool)
+    mask[batch_indices[order], positions] = False
+    return padded, mask

@@ -24,7 +24,7 @@ import sys
 from itertools import zip_longest
 from pathlib import Path
 
-from magicnet.dump import canonical, load
+from magicnet.dump import canonical, decision_tokens, load, resolve_candidates
 
 
 def main() -> int:
@@ -53,14 +53,13 @@ def main() -> int:
         why = None
         if rec.chosen != rep.chosen:
             why = f"chosen {rec.chosen} != {rep.chosen}"
-        elif [a.get("desc") for a in rec.actions] != [
-            a.get("desc") for a in rep.actions
-        ]:
+        elif resolve_candidates(rec) != resolve_candidates(rep):
             why = (
-                f"action pool differs: {len(rec.actions)} vs {len(rep.actions)} entries"
+                f"candidates differ: {len(rec.actions)} vs {len(rep.actions)} entries"
             )
         else:
-            ca, cb = canonical(rec.tokens), canonical(rep.tokens)
+            # Schema 16: the prompt and option tokens are compared with the state.
+            ca, cb = canonical(decision_tokens(rec)), canonical(decision_tokens(rep))
             if ca != cb:
                 only_rec = [t for t in ca if t not in cb]
                 only_rep = [t for t in cb if t not in ca]

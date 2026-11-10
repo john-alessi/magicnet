@@ -36,6 +36,19 @@ Runs the checks that have to pass before a dump is trustworthy:
    entries are host-independent rules text (no ``(id)``, ``CARDNAME``, player
    name or the host's own name).
 5. **Label usability** -- the chosen action resolves to a pool index.
+   Schema 16 **decision candidates**: every record has a ``prompt`` token
+   (type ``decision``, id ``q``, ``kind`` equal to the record's) and each
+   candidate in ``actions`` is either ``{"ref": ...}`` resolving to exactly
+   one token the viewer can see -- never a history, phantom/untracked or
+   hidden-region token, nor an individual card in a hidden zone; a count
+   aggregate only in the viewer's own library (a library-search pick) -- or
+   an option token (type ``action``, id ``a<i>``, a ``verb`` from
+   ``ACTION_VERBS``); refs are distinct; ability decisions end in exactly one
+   ``pass`` option and other kinds have none; ``chosen`` indexes into
+   ``actions``; every prompt/option edge (incl. ``selected``) resolves to such
+   a visible token. Prompt and option tokens pass the token-layout and text
+   checks of (4), which also reject any player's deck name in a string
+   component.
 6. **Hidden-truth labels** (schema 15, ``-Dmagicnet.labels=true``) -- every
    hidden-region state token (``magicnet.dump.is_region``) has exactly one
    label whose ``total`` equals its ``count`` (1 for a face-down object) and
@@ -60,11 +73,12 @@ from collections import Counter
 from pathlib import Path
 
 from magicnet.dump import (
-    HIDDEN_TRUTH, REGION_PREFIX, SchemaError, comp, flatten, is_hidden, is_region, load,
-    resolve_edges, strip_ids, strip_option_ids, summarise,
+    HIDDEN_TRUTH, OPTION_TYPE, PASS_VERB, PROMPT_TYPE, REGION_PREFIX, SchemaError, comp,
+    decision_tokens, flatten, is_hidden, is_option, is_ref, is_region, load, resolve_edges,
+    strip_ids, summarise,
 )
 from magicnet.catalog.keys import load_registry
-from magicnet.schema import COMPONENTS
+from magicnet.schema import ACTION_VERBS, COMPONENTS, DECISION_KINDS, RELATIONS
 
 # Zones whose contents are hidden from a player who does not own them. The
 # extractor omits the name (schema 12); any card name appearing here
@@ -89,24 +103,106 @@ REVEALABLE_ZONES = frozenset({"opp_sideboard"})
 # that set the mark.
 KNOWN_BY_REVEAL_ZONES = frozenset({"opp_hand"})
 
-def check_option_ids(decisions) -> list[str]:
-    """Options must not carry raw object ids.
+def _target_problem(tok: dict) -> str | None:
+    """Why a decision candidate or a prompt/option edge must not point at *tok*
+    (schema 16), or None: only tokens the viewer can see as one object (or a
+    player / stack item), plus own-library name aggregates."""
+    kind = tok.get("type")
+    zone = tok.get("zone") or ""
+    tok_id = tok.get("id")
+    if kind in ("history", PROMPT_TYPE, OPTION_TYPE):
+        return f"{kind} token"
+    if zone == "phantom" or zone.endswith("_untracked"):
+        return f"{zone} token"
+    if isinstance(tok_id, str) and tok_id.startswith(REGION_PREFIX):
+        return f"hidden region {tok_id}"
+    if kind in ("game_object", "library_card") and is_hidden(tok) and zone in HIDDEN_ZONES:
+        return f"hidden individual card in {zone}"
+    if kind == "library_card" and _object_id(tok) is None:
+        return f"aggregate without id in {zone}"
+    if kind == "library_card" and (comp(tok, "count", 1) > 1 or not str(tok_id).startswith("c")) \
+            and zone != "self_library":
+        return f"aggregate in {zone}"
+    return None
 
-    Ids are unstable across runs (§16.8), so one surviving in an option would be
-    a nondeterministic feature. Checked separately from token ids because
-    options live in their own array and were missed by the token check.
-    """
-    problems = []
+
+def check_candidates(decisions) -> Counter:
+    """Schema 16 prompt and candidate checks (module docstring, check 5)."""
+    problems: Counter = Counter()
+    unlabelled = 0
     for dec in decisions:
-        for opt in strip_option_ids(dec.actions):
-            for key, value in opt.items():
-                # Oracle ids are Scryfall's stable card identity, not run-unstable
-                # object ids, so they are a legitimate feature.
-                if (key.endswith("_id") or key == "id") and not key.endswith("oracle_id"):
-                    problems.append(
-                        f"game {dec.game} decision {dec.decision}: "
-                        f"option retains {key}={value!r}"
-                    )
+        prompt = dec.prompt
+        if prompt is None:
+            problems["record without a prompt"] += 1
+        else:
+            if prompt.get("type") != PROMPT_TYPE or prompt.get("id") != "q":
+                problems["malformed prompt token"] += 1
+            if comp(prompt, "kind") != dec.kind:
+                problems["prompt kind != record kind"] += 1
+            if dec.kind not in DECISION_KINDS:
+                problems[f"unknown decision kind {dec.kind}"] += 1
+        holders: dict[str, list[dict]] = {}
+        for tok in dec.tokens:
+            for key in ([tok["id"]] if tok.get("id") is not None else []) + list(tok.get("handles", ())):
+                holders.setdefault(str(key), []).append(tok)
+        refs = set()
+        passes = []
+        for i, cand in enumerate(dec.actions):
+            if is_ref(cand):
+                if set(cand) != {"ref"}:
+                    problems["reference candidate with extra keys"] += 1
+                if cand["ref"] in refs:
+                    problems["duplicate reference candidate"] += 1
+                refs.add(cand["ref"])
+                hits = holders.get(cand["ref"], [])
+                if len(hits) != 1:
+                    problems[f"candidate ref resolves to {len(hits)} tokens ({dec.kind})"] += 1
+                    continue
+                why = _target_problem(hits[0])
+                if why:
+                    problems[f"candidate ref to {why} ({dec.kind})"] += 1
+            elif is_option(cand):
+                if cand.get("id") != f"a{i}":
+                    problems["option token id is not a<index>"] += 1
+                verb = comp(cand, "verb")
+                if verb not in ACTION_VERBS:
+                    problems[f"option verb {verb!r} not in ACTION_VERBS"] += 1
+                if verb == PASS_VERB:
+                    passes.append(i)
+            else:
+                problems["candidate is neither a ref nor an option token"] += 1
+        if dec.kind == "ability":
+            if passes != [len(dec.actions) - 1]:
+                problems["ability decision without exactly one, last, pass option"] += 1
+        elif passes:
+            problems[f"pass option on a {dec.kind} decision"] += 1
+        if dec.chosen == -1 and dec.chosen_match != "pending":
+            unlabelled += 1
+        elif not 0 <= dec.chosen < len(dec.actions):
+            problems[f"chosen {dec.chosen} outside the {len(dec.actions)} candidates"] += 1
+        # Prompt and option edges resolve to visible tokens.
+        toks = decision_tokens(dec)
+        extra = toks[len(dec.tokens):]
+        resolved = resolve_edges(toks)[len(dec.tokens):]
+        for tok, edges in zip(extra, resolved, strict=True):
+            raw = tok.get("edges", ())
+            if len(edges) != len(raw):
+                problems[f"unresolved {tok.get('type')} edge ({dec.kind})"] += len(raw) - len(edges)
+            for e in raw:
+                if e.get("rel") not in RELATIONS:
+                    problems[f"unknown relation {e.get('rel')}"] += 1
+                if e.get("rel") == "selected" and tok.get("type") != PROMPT_TYPE:
+                    problems["selected edge off the prompt"] += 1
+            for rel, j in edges:
+                if j >= len(dec.tokens):
+                    problems[f"{tok.get('type')} edge to a prompt/option token"] += 1
+                    continue
+                why = _target_problem(toks[j])
+                if why:
+                    problems[f"{tok.get('type')} {rel} edge to {why}"] += 1
+    if unlabelled:
+        # Informational: an observed expert answer that could not be located.
+        print(f"unlabelled choices {unlabelled} (chosen -1)")
     return problems
 
 
@@ -449,10 +545,24 @@ class _Kinds(dict):
         return top
 
 
-def check_layout(tokens: list[dict], kinds: _Kinds | None = None) -> Counter:
+def deck_names(viewers) -> set[str]:
+    """Harness player names ("P0-<deck>") and their deck names, from the
+    records' ``viewer`` fields: neither may appear in any string component."""
+    out = set()
+    for v in viewers:
+        out.add(v)
+        m = re.match(r"P\d+-(.+)$", v or "")
+        if m:
+            out.add(m.group(1))
+    return {n for n in out if n and len(n) >= 6}
+
+
+def check_layout(tokens: list[dict], kinds: _Kinds | None = None,
+                 forbidden: set[str] = frozenset()) -> Counter:
     """Schema-9 layout: identity/ref keys top-level, model inputs under
     ``components`` (non-empty when present), flags only when true, and no
-    run-unstable object id inside a string component."""
+    run-unstable object id inside a string component. *forbidden*: player /
+    deck names (:func:`deck_names`) no string component may contain."""
     kinds = kinds if kinds is not None else _Kinds()
     problems: Counter = Counter()
     for tok in tokens:
@@ -479,6 +589,8 @@ def check_layout(tokens: list[dict], kinds: _Kinds | None = None) -> Counter:
                     for what, pat in RUN_CONTEXT:
                         if pat.search(text):
                             problems[f"{what} in string component: {key}"] += 1
+                if isinstance(text, str) and any(n in text for n in forbidden):
+                    problems[f"player/deck name in string component: {tok.get('type')}.{key}"] += 1
         problems.update(ability_text_problems(tok))
     return problems
 
@@ -491,14 +603,19 @@ def check_layout_dump(path: Path, limit: int) -> tuple[Counter, int]:
     problems: Counter = Counter()
     ids_in_names = 0
     with path.open() as fh:
+        forbidden = deck_names({json.loads(line).get("viewer") for line in fh if line.strip()})
+    with path.open() as fh:
         for n, line in enumerate(fh):
             if limit and n >= limit:
                 break
             if not line.strip():
                 continue
             rec = json.loads(line)
-            tokens = rec["hist_new"] + rec["state"]
-            problems.update(check_layout(tokens, kinds))
+            # Schema 16: the prompt and option tokens are checked like any token.
+            extra = ([rec["prompt"]] if rec.get("prompt") else []) + [
+                c for c in rec.get("actions", ()) if c.get("type") == OPTION_TYPE]
+            tokens = rec["hist_new"] + rec["state"] + extra
+            problems.update(check_layout(tokens, kinds, forbidden))
             ids_in_names += sum(1 for tok in tokens for k, v in tok.items()
                                 if k != COMPONENTS and isinstance(v, str) and OBJECT_ID_IN_TEXT.search(v))
     return problems, ids_in_names
@@ -592,7 +709,7 @@ def check_labels(path: Path, limit: int) -> tuple[Counter, int]:
             if not line.strip():
                 continue
             rec = json.loads(line)
-            for part in ("hist_new", "state", "actions"):
+            for part in ("hist_new", "state", "prompt", "actions"):
                 where = _label_in(rec.get(part), part)
                 if where:
                     problems[f"label inside the observation at {where.split('[')[0]}"] += 1
@@ -668,13 +785,13 @@ def main() -> int:
     leaks, offenders = check_leaks(args.dump, args.limit)
     layout, ids_in_names = check_layout_dump(args.dump, args.limit)
     print(f"ids in names/refs  {ids_in_names} (informational)")
-    option_ids = check_option_ids(islice(load(args.dump), args.limit or None))
+    candidates = check_candidates(islice(load(args.dump), args.limit or None))
     label_problems, labelled = check_labels(args.dump, args.limit)
     print(f"hidden_truth       {labelled} labelled records")
 
     failures = []
-    if option_ids:
-        failures.append(f"{len(option_ids)} options retain raw ids: {option_ids[0]}")
+    if candidates:
+        failures.append(f"{sum(candidates.values())} candidate/prompt problems: {dict(candidates)}")
     if stats.records == 0:
         failures.append("dump is empty")
     if stats.unaddressable:
@@ -691,7 +808,7 @@ def main() -> int:
             print(f"FAIL {f}", file=sys.stderr)
         return 1
 
-    print("\nOK schema, history reconstruction, leak boundary, token layout, option ids, label usability"
+    print("\nOK schema, history reconstruction, leak boundary, token layout, candidates/prompt, label usability"
           + (", hidden_truth" if labelled else ""))
     return 0
 

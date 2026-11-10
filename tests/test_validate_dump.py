@@ -470,3 +470,76 @@ def test_live_request_with_hidden_truth_is_rejected() -> None:
     with pytest.raises(SchemaError, match="hidden_truth"):
         HistoryReassembler().absorb(rec, where=LIVE_REQUEST)
     assert HistoryReassembler().absorb(rec).hidden_truth == TRUTH
+
+
+# ---- schema 16: decision candidates and the prompt ------------------------
+
+BEAR = _with(_nest({"type": "game_object", "zone": "self_battlefield", "id": "c9", "name": "Bear"}), "h1")
+ISLANDS = _nest({"type": "library_card", "zone": "self_library", "id": "n:Island", "name": "Island",
+                 "count": 3})
+
+
+def _option(i: int, verb: str, edges: dict | None = None, **comps) -> dict:
+    tok = {"type": "action", "id": f"a{i}", "components": {"verb": verb, **comps}}
+    if edges:
+        tok["edges"] = [{"rel": r, "to": t} for r, t in edges.items()]
+    return tok
+
+
+def _decision(state: list[dict], actions: list[dict], kind: str = "choose_entity",
+              prompt_edges: dict | None = None, chosen: int = 0):
+    from magicnet.dump import HistoryReassembler
+    prompt = {"type": "decision", "id": "q", "components": {"kind": kind}}
+    if prompt_edges:
+        prompt["edges"] = [{"rel": r, "to": t} for r, t in prompt_edges.items()]
+    return HistoryReassembler().absorb({
+        "schema": SUPPORTED_SCHEMA, "game": 0, "decision": 0, "viewer": "P0-Mono Red Burn",
+        "kind": kind, "turn": 1, "phase": "MAIN1", "hist_from": 0, "hist_new": [], "hist_total": 0,
+        "state": state, "prompt": prompt, "actions": actions, "chosen": chosen, "chosen_match": "index"})
+
+
+def test_candidates_map_refs_to_tokens_and_options_after_the_prompt() -> None:
+    from magicnet.dump import decision_tokens, resolve_candidates, resolve_edges
+    dec = _decision([SELF, BEAR, ISLANDS],
+                    [_option(0, "choose_nothing"), {"ref": "h1"}, {"ref": "n:Island"},
+                     _option(3, "confirm", {"source_is": "h1"})],
+                    prompt_edges={"selected": "c9", "source_is": "h1"})
+    toks = decision_tokens(dec)
+    assert [t.get("id") for t in toks] == ["p0", "c9", "n:Island", "q", "a0", "a3"]
+    assert resolve_candidates(dec) == [4, 1, 2, 5]
+    assert resolve_edges(toks)[3:] == [[("selected", 1), ("source_is", 1)], [], [("source_is", 1)]]
+    assert dec.pass_index is None
+    passing = _decision([SELF], [_option(0, "cast"), _option(1, "pass")], kind="ability", chosen=1)
+    assert passing.pass_index == 1 and passing.is_pass
+
+
+def test_candidate_refs_must_resolve_to_one_visible_token() -> None:
+    hidden = _nest({"type": "game_object", "zone": "opp_hand", "id": "c5"})
+    check = validate_dump.check_candidates
+    assert check([_decision([SELF, BEAR, ISLANDS, OPP_HAND],
+                            [{"ref": "h1"}, {"ref": "n:Island"}, {"ref": "p0"}])]) == {}
+    assert check([_decision([SELF, OPP_HAND, hidden],
+                            [{"ref": "r:opp_hand"}, {"ref": "c5"}, {"ref": "c77"}, {"ref": "p0"},
+                             {"ref": "p0"}])]) == {
+        "candidate ref to hidden region r:opp_hand (choose_entity)": 1,
+        "candidate ref to hidden individual card in opp_hand (choose_entity)": 1,
+        "candidate ref resolves to 0 tokens (choose_entity)": 1,
+        "duplicate reference candidate": 1,
+    }
+    assert check([_decision([SELF], [_option(0, "pass"), _option(1, "cast")], kind="ability"),
+                  _decision([SELF], [_option(1, "frobnicate", {"selected": "p0"})])]) == {
+        "ability decision without exactly one, last, pass option": 1,
+        "option token id is not a<index>": 1,
+        "option verb 'frobnicate' not in ACTION_VERBS": 1,
+        "selected edge off the prompt": 1,
+    }
+
+
+def test_option_text_must_not_carry_a_deck_name() -> None:
+    forbidden = validate_dump.deck_names(["P0-Mono Red Burn", "P1-[Pioneer] #06 - Azorius Control"])
+    assert {"Mono Red Burn", "[Pioneer] #06 - Azorius Control"} <= forbidden
+    clean = _option(0, "confirm", ability="When this creature enters, draw a card.")
+    leaky = _option(1, "confirm", ability="Target player ([Pioneer] #06 - Azorius Control) draws.")
+    assert validate_dump.check_layout([clean], forbidden=forbidden) == {}
+    assert validate_dump.check_layout([leaky], forbidden=forbidden) == {
+        "player/deck name in string component: action.ability": 1}

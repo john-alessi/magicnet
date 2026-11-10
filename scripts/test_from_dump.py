@@ -7,25 +7,27 @@ from torch.profiler import profile, record_function, ProfilerActivity
 import time
 from magicnet.network.constants import EXTERNAL_EMBEDDING_PCA_DIM
 
-torch.set_default_device('cuda' if torch.cuda.is_available() else 'cpu')
-torch.set_float32_matmul_precision("high")
+torch.set_default_device('cpu')
+#torch.set_default_device('cuda' if torch.cuda.is_available() else 'cpu')
+#torch.set_float32_matmul_precision("high")
 #torch.autocast("cuda", dtype=torch.bfloat16)
 
 #from torch.nn.attention import sdpa_kernel, SDPBackend
 
-BATCH_SIZE = 20
+BATCH_SIZE = 2
 
 decision1 = next(x for x in load("/home/john/Projects/magicnet/forge-bridge/fixtures/dumps/pio_mrp.jsonl") if (x.game, x.decision) == (3, 50))
 decision2 = next(x for x in load("/home/john/Projects/magicnet/forge-bridge/fixtures/dumps/pio_mrp.jsonl") if (x.game, x.decision) == (3, 10))
 decision3 = next(x for x in load("/home/john/Projects/magicnet/forge-bridge/fixtures/dumps/pio_mrp.jsonl") if (x.game, x.decision) == (3, 279))
-decision4 = next(x for x in load("/home/john/Projects/magicnet/forge-bridge/fixtures/dumps/pio_mrp.jsonl") if (x.game, x.decision) == (3, 270))
+decision4 = next(x for x in load("/home/john/Projects/magicnet/forge-bridge/fixtures/dumps/pio_mrp.jsonl") if (x.game, x.decision) == (2, 316))
 
 games = [
     {
-        'state': decision.state,
+        'state': decision.state + [decision.prompt],
         'history': decision.history,
+        'actions': decision.actions,
     }
-    for decision in [decision3 for _ in range(BATCH_SIZE)]
+    for decision in [decision3 , decision4]
 ]
 loader = DataLoader(CatalogClient())
 policy = MagicNet()

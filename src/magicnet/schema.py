@@ -12,7 +12,27 @@ Changing the order is a schema change and invalidates existing checkpoints.
 
 from __future__ import annotations
 
-SCHEMA = 15
+SCHEMA = 18
+
+# Schema 18: non-mana cost choices (-Dmagicnet.payment). Decision kinds
+# ``pay_sacrifice``, ``pay_discard``, ``pay_exile``, ``pay_tap``, ``pay_untap``,
+# ``pay_return``, ``pay_reveal`` (one card per decision, candidates are
+# references), ``choose_optional_cost`` (kicker, buyback, multikicker, ...),
+# ``choose_additional_cost`` (Lightning Axe-style alternatives) and
+# ``pay_mana_combo`` (one colour per decision for "any combination" mana);
+# option verbs ``optional_cost``, ``choose_color``, ``waterbend``. Appended.
+
+# Schema 17: mana payment decisions (-Dmagicnet.payment). Decision kinds
+# ``pay_mana`` (one step of paying a mana cost), ``pay_convoke`` (Convoke /
+# Improvise taps) and ``pay_delve``; option verbs ``activate_mana``,
+# ``use_pool``, ``pay_life``, ``convoke``, ``improvise``; vocabulary
+# ``mana_color``. Appended, so existing indices are unchanged.
+
+# Schema 16: decision candidates. A record's ``actions`` mixes ``{"ref": ...}``
+# references to existing tokens with option tokens (type ``action``, a ``verb``
+# from ACTION_VERBS), and a top-level ``prompt`` token (type ``decision``,
+# ``kind`` from DECISION_KINDS) carries ``selected`` edges. Own-library name
+# aggregates carry an ``n:<name>`` id. See magicnet.dump.
 
 # Schema 15: hidden-region count aggregates (opponent hand, library remainder,
 # sideboard) carry a top-level ``id`` ``r:<zone>`` -- a join key to the record's
@@ -84,6 +104,8 @@ TOKEN_TYPES: tuple[str, ...] = (
     "delayed_trigger",
     "action",
     "history",
+    # Schema 16: the record's decision prompt token.
+    "decision",
 )
 
 # ``global`` and ``player`` tokens carry ``zone: null``. They need a real slot
@@ -140,6 +162,10 @@ RELATIONS: tuple[str, ...] = (
     # State side: object -> static source (reverse of affects) or the history
     # resolve event whose continuous effect still applies to it.
     "affected_by",
+    # Schema 16: decision prompt -> tokens already chosen earlier in the same
+    # decomposed decision (attackers/blockers so far, targets already picked,
+    # cards already placed in this scry/surveil). Appended last.
+    "selected",
 )
 
 # Schema 13: closed vocabularies of ``categorical`` component keys, by the
@@ -168,6 +194,34 @@ PHASES: tuple[str, ...] = (
     "MAIN2", "END_OF_TURN", "CLEANUP", "NONE",
 )
 
+# Schema 16: ``verb`` of a decision option token (type ``action``).
+# ``attack``, ``block`` and ``choose_object`` are fallbacks for an object
+# choice whose object has no token the viewer can see.
+ACTION_VERBS: tuple[str, ...] = (
+    "pass", "cast", "activate", "play_land", "attack", "no_attack", "block", "no_block",
+    "choose_nothing", "choose_object", "confirm", "decline", "pay", "mode", "number",
+    "scry_top", "scry_bottom", "surveil_top", "surveil_graveyard", "order_next",
+    # Schema 17: mana payment steps.
+    "activate_mana", "use_pool", "pay_life", "convoke", "improvise",
+    # Schema 18: optional/additional costs, combination mana colours, waterbend.
+    "optional_cost", "choose_color", "waterbend",
+)
+# Schema 16: a record's ``kind`` and its prompt token's ``kind`` component.
+DECISION_KINDS: tuple[str, ...] = (
+    "ability", "declare_attacker", "declare_blocker", "choose_entity", "choose_companion",
+    "choose_card_zone_change", "choose_number", "confirm_trigger", "confirm_action",
+    "choose_mode", "pay_unless", "scry", "surveil", "order_top", "order_bottom",
+    "order_triggers", "choose_target",
+    # Schema 17: -Dmagicnet.payment.
+    "pay_mana", "pay_convoke", "pay_delve",
+    # Schema 18: non-mana cost parts, optional costs, combination mana.
+    "pay_sacrifice", "pay_discard", "pay_exile", "pay_tap", "pay_untap", "pay_return",
+    "pay_reveal", "choose_optional_cost", "choose_additional_cost", "pay_mana_combo",
+)
+# Schema 17: colour a payment option adds or spends (C: colourless).
+MANA_COLORS: tuple[str, ...] = ("W", "U", "B", "R", "G", "C")
+
+# New vocabularies are appended, so existing vocabulary positions are unchanged.
 VOCABS: dict[str, tuple[str, ...]] = {
     "zone": ZONES,
     "verb": HISTORY_VERBS,
@@ -175,8 +229,13 @@ VOCABS: dict[str, tuple[str, ...]] = {
     "dnr_reason": DNR_REASONS,
     "cause_kind": CAUSE_KINDS,
     "phase": PHASES,
+    "action_verb": ACTION_VERBS,
+    "decision_kind": DECISION_KINDS,
+    "mana_color": MANA_COLORS,
 }
 
+# Categorical component key -> vocabulary. ``verb`` is per token type: history
+# verbs on history tokens, ACTION_VERBS on option tokens -- use vocab_for().
 VOCAB_LOOKUP: dict[str, str] = {
     "zone": "zone",
     "to": "zone",
@@ -186,7 +245,20 @@ VOCAB_LOOKUP: dict[str, str] = {
     "dnr_reason": "dnr_reason",
     "cause_kind": "cause_kind",
     "phase": "phase",
+    "kind": "decision_kind",
+    "mana_color": "mana_color",
+    
 }
+
+# (token type, key) overrides of VOCAB_LOOKUP (keys.json ``type_vocabs``).
+TYPE_VOCAB_LOOKUP: dict[tuple[str, str], str] = {
+    ("action", "verb"): "action_verb",
+}
+
+
+def vocab_for(key: str, token_type: str | None = None) -> str | None:
+    """Vocabulary of a categorical component on a token of *token_type*, or None."""
+    return TYPE_VOCAB_LOOKUP.get((token_type, key)) or VOCAB_LOOKUP.get(key)
 
 
 def vocab_index(vocab: str, value: str) -> int:

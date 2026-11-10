@@ -663,6 +663,11 @@ public final class GameHistory {
             CardView.CardStateView st = v.getCurrentState();
             if (st != null) {
                 s.types = st.getType() == null ? null : st.getType().toString();
+                if (s.types != null && s.types.isBlank()) {
+                    // An effect card ("The Monarch") has an empty type line:
+                    // absent, not an empty string component.
+                    s.types = null;
+                }
                 if (st.getType() != null && st.getType().isCreature()) {
                     s.power = st.getPower();
                     s.toughness = st.getToughness();
@@ -716,7 +721,7 @@ public final class GameHistory {
             }
             // Schema 15: a hidden-region aggregate carries an "r:<zone>" id, but
             // it is still the aggregate, not an object a handle can resolve to by id.
-            if (id != null && !StateExtractor.isRegionRef(id)) {
+            if (id != null && !StateExtractor.isRegionRef(id) && !StateExtractor.isNameAggregateRef(id)) {
                 if (!isIndividualHidden(t)) {
                     byId.put(String.valueOf(id), t);
                 }

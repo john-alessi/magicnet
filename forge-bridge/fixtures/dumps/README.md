@@ -6,13 +6,25 @@ and must be regenerated after a schema bump.
 
 ## pio_mrp.jsonl
 12 AI-vs-AI games, Mono-Red Prowess mirror (`fixtures/pio_mrp`), seed 7,
-combat and choice routing on, **schema 15**, **with hidden-information
-labels** (model inputs under each token's
+combat and choice routing on, mana payment routing **off** (no
+`-Dmagicnet.payment`, so no `pay_*`, `choose_optional_cost`, `choose_additional_cost` records and
+the picks below keep their decision numbers), **schema 18**, **with
+hidden-information labels** (model inputs under each token's
 `components`; read them with `magicnet.dump.comp(tok, key)`; abilities as the
 `gained`/`lost` difference from the printed card, plus `base_power`/`base_toughness`;
 history as one event per token with role edges to tracking handles, events and
 players -- resolve them with `magicnet.dump.resolve_edges`; see
-`forge-bridge/README.md`, "History"). Regenerate with,
+`forge-bridge/README.md`, "History"). Each record is `{schema, game,
+decision, viewer, kind, turn, phase, hist_total, hist_from, hist_new, state,
+prompt, actions, hidden_truth, chosen, chosen_match}`: `prompt` is the
+decision token (`{"type":"decision","id":"q",...}`, `kind`, `prompt_text`,
+`selected` edges ...) and `actions` the candidate list `chosen` indexes into --
+`{"ref": <handle or id>}` references to existing tokens (defenders, attackers
+to block, library-search picks via their `n:<name>` aggregate) or option tokens
+(`{"type":"action","id":"a<i>","components":{"verb":"cast",...}}`; `pass`
+last on ability decisions). `magicnet.dump.decision_tokens(d)` /
+`resolve_candidates(d)` give the pointer layout; see `forge-bridge/README.md`,
+"Decision candidates and the prompt". Regenerate with,
 from `forge-bridge/`:
 
     java -Xmx2048m -Dmagicnet.actions=ai -Dmagicnet.choices=true -Dmagicnet.combat=true \
@@ -43,7 +55,13 @@ back to it. Spell and trigger pumps (Monstrous Rage, prowess) are
 (schema 13; they replace `temp_power`). Regenerated at schema 14 from the same
 seed: the games are identical, so the picks below are unchanged. Regenerated
 again at schema 15 with labels: apart from the `r:<zone>` ids and
-`hidden_truth`, every record is identical to the schema-14 dump.
+`hidden_truth`, every record is identical to the schema-14 dump. Regenerated
+at schema 16 (same seed, same 3456 records, identical games, history, state
+and labels): only `prompt`/`actions` changed, plus `n:<name>` ids on the
+viewer's own-library name aggregates. Regenerated at schema 17 with payment
+routing off: byte-identical to the schema-16 dump except the `schema` field.
+Regenerated at schema 18 (non-mana cost routing, same flags): byte-identical
+to the schema-17 dump except the `schema` field.
 
 | game | decision | viewer | turn | why |
 |---|---|---|---|---|

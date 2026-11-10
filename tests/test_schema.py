@@ -126,8 +126,17 @@ def test_categorical_vocabularies_match(bridge: dict) -> None:
 def test_categorical_keys_name_a_pinned_vocabulary() -> None:
     registry = load_registry()
     cats = {k: e.vocab for k, e in registry.keys.items() if e.value_kind == "categorical"}
-    assert {"verb", "phase", "from", "to", "move_kind", "reason", "cause_kind"} <= set(cats)
+    assert {"verb", "phase", "from", "to", "move_kind", "reason", "cause_kind", "kind"} <= set(cats)
     assert not {k: v for k, v in cats.items() if v not in schema.VOCABS}
+    # Schema 16: per-token-type overrides (verb on option tokens) are pinned too,
+    # and agree with magicnet.schema.vocab_for.
+    for k, e in registry.keys.items():
+        for token_type, vocab in e.type_vocabs:
+            assert vocab in schema.VOCABS, (k, token_type, vocab)
+            assert schema.vocab_for(k, token_type) == vocab, (k, token_type)
+    assert schema.vocab_for("kind") == registry.keys["kind"].vocab == "decision_kind"
+    assert schema.vocab_for("verb", "action") == "action_verb"
+    assert schema.vocab_for("verb", "history") == "verb"
 
 
 def test_schema_version_matches(bridge: dict) -> None:

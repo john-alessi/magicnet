@@ -86,6 +86,20 @@ public final class StateExtractor {
     }
 
     /**
+     * Schema 16: the id of a name aggregate of the viewer's own library (the
+     * unknown-position copies of one card name), {@code "n:" + name}. A join
+     * key only, so a decision candidate (a library search pick) can reference
+     * the aggregate: identical copies are one candidate, not several.
+     */
+    static String nameAggregateRef(String name) {
+        return "n:" + name;
+    }
+
+    static boolean isNameAggregateRef(Object id) {
+        return id instanceof String && ((String) id).startsWith("n:");
+    }
+
+    /**
      * Ref for an entity that may be either. A combat defender is a player, a
      * planeswalker, or a battle; the latter two are cards.
      */
@@ -202,7 +216,7 @@ public final class StateExtractor {
                         sb.append(',');
                     }
                     sb.append("{\"rel\":\"").append(edges.get(i)[0])
-                      .append("\",\"to\":\"").append(edges.get(i)[1]).append("\"}");
+                      .append("\",\"to\":\"").append(esc(edges.get(i)[1])).append("\"}");
                 }
                 sb.append(']');
             }
@@ -616,6 +630,7 @@ public final class StateExtractor {
         }
         for (Map.Entry<String, Integer> e : hist.entrySet()) {
             out.add(new Tok("library_card", zoneName)
+                    .p("id", nameAggregateRef(e.getKey()))
                     .p("name", e.getKey())
                     .p("oracle_id", OracleIds.of(example.get(e.getKey())))
                     .p("count", e.getValue()));

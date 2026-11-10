@@ -40,7 +40,7 @@ from typing import Protocol
 
 from magicnet.dump import Decision, HistoryReassembler, SUPPORTED_SCHEMA, SchemaError
 from magicnet.network.magicnet import MagicNet
-from magicnet.network.data_loader import load_game
+from magicnet.network.data_loader import DataLoader
 
 class Policy(Protocol):
     """Chooses an action given a decision request.
@@ -69,28 +69,30 @@ class LearnedPolicy:
         self,
         catalog: CatalogClient,
         seed: int,
-        model: MagicNet
+        model: MagicNet,
+        data_loader: DataLoader
     ) -> None:
         self.catalog = catalog
         self.seed = seed
         self.model = model
         self._rng = random.Random(self.seed)
+        self.data_loader = data_loader
 
     def begin_game(self, game: int) -> None:
         pass
 
     def act(self, decision: Decision) -> int:
-        card_names = [
-            c['name']
-            for c in decision.state
-            if c['type'] in ['game_object'] and c['name'] != 'HIDDEN'
-        ]
-        card_metadata = self.catalog.lookup(card_names)
-        game = load_game(decision.state, decision.history, self.catalog)
-        #x = self.model(decision.history, decision.state, card_metadata)
+        game_state = self.data_loader(
+            [{
+                'state': decision.state + [decision.prompt],
+                'history': decision.history,
+                'actions': decision.actions,
+            }],
+            self.catalog,
+        )
+        _, selected_action = self.model(game_state)
         self.decisions += 1
         selected_action = self._rng.randrange(len(decision.actions))
-        breakpoint()
         return selected_action
 
 @dataclass
