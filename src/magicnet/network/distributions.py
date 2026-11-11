@@ -13,10 +13,10 @@ class HiddenCardPosterior(torch.nn.Module):
             hidden_features=(FLOW_DIM,FLOW_DIM)
         )
     
-    def forward(self, batches, unknown_cards, pca, targets=None, n_samples=0):
+    def forward(self, batches, unknown_card_indices, pca, targets=None, n_samples=0):
         samples = None
         likelihood = None
-        unknown_cards = batches[unknown_cards[:,0], unknown_cards[:,1]]
+        unknown_cards = batches[unknown_card_indices[:,0], unknown_card_indices[:,1]]
         distributions = self.flow(unknown_cards)
 
         if targets is not None:

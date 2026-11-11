@@ -82,10 +82,18 @@ class RelationalCrossAttentionBlock(torch.nn.Module):
         )
 
     def forward(self, action_batches, action_mask, state_batches, state_mask, edge_emb, edge_pairs):
+        empty = action_mask.all(-1)
+        safe_mask = action_mask.clone()
+        safe_mask[empty, 0] = False # unmask at least 1 position so softmax doesn't divide by 0
         n = self.ln1(action_batches)
-        tokens = action_batches + self.self_attn(n, n, n, key_padding_mask=action_mask)[0]
+        tokens = action_batches + self.self_attn(n, n, n, key_padding_mask=safe_mask)[0]
         # cross-atention with policy state here
         tokens = tokens + self.ff(self.ln2(tokens))
+        tokens = tokens.masked_fill(action_mask[..., None], 0.0)
+
+        if torch.isnan(tokens).any().item():
+            breakpoint()
+
         return tokens
 
 class RelationalAttentionBlock(torch.nn.Module):
