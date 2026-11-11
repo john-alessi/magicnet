@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from .constants import *
+from ..dump import is_region
 import time
 
 class DataLoader():
@@ -156,7 +157,24 @@ class DataLoader():
             'edges': torch.tensor(edges, dtype=torch.int32),
             'action_edges': torch.tensor(action_edges, dtype=torch.int32),
             'unknown_cards': torch.tensor(
-                [(b,i) for b,g in enumerate(games) for i,c in enumerate(g['state']) if 'name' not in c and 'zone' in c],
+                [
+                    (b,i)
+                    for b,g in enumerate(games)
+                    for i,c in enumerate(g['state'])
+                    if is_region(c)
+                    for _ in range(
+                        c['components']['count'] if 'count' in c['components'] else 1
+                    )
+                ],
+                dtype=torch.int32,
+            ),
+            'unknown_cards_sampling': torch.tensor(
+                [
+                    (b,i)
+                    for b,g in enumerate(games)
+                    for i,c in enumerate(g['state'])
+                    if is_region(c)
+                ],
                 dtype=torch.int32,
             ),
             'action_refs': torch.tensor(action_refs, dtype=torch.int32),
