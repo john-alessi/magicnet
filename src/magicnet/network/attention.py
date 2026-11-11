@@ -74,27 +74,54 @@ class RelationalCrossAttentionBlock(torch.nn.Module):
         self.ln1 = torch.nn.LayerNorm(TOKEN_DIM)
         self.self_attn = torch.nn.MultiheadAttention(TOKEN_DIM, DECODER_SELF_ATTENTION_HEADS, batch_first=True)
         self.ln2 = torch.nn.LayerNorm(TOKEN_DIM)
+        self.cross_attn = RelationalCrossAttention()
+        self.ln3 = torch.nn.LayerNorm(TOKEN_DIM)
         self.ff = torch.nn.Sequential(
             torch.nn.Linear(TOKEN_DIM, FEED_FORWARD_DIM),
             torch.nn.GELU(),
             torch.nn.Linear(FEED_FORWARD_DIM, TOKEN_DIM),
-            torch.nn.Dropout(),
+            torch.nn.Dropout(DROPOUT),
         )
 
-    def forward(self, action_batches, action_mask, state_batches, state_mask, edge_emb, edge_pairs):
+    def forward(self, action_tokens, action_mask, state_tokens, state_mask, edge_emb, edge_pairs):
         empty = action_mask.all(-1)
         safe_mask = action_mask.clone()
         safe_mask[empty, 0] = False # unmask at least 1 position so softmax doesn't divide by 0
-        n = self.ln1(action_batches)
-        tokens = action_batches + self.self_attn(n, n, n, key_padding_mask=safe_mask)[0]
-        # cross-atention with policy state here
-        tokens = tokens + self.ff(self.ln2(tokens))
+        n = self.ln1(action_tokens)
+        tokens = action_tokens + self.self_attn(n, n, n, key_padding_mask=safe_mask)[0]
+        tokens = tokens + self.cross_attn(self.ln2(tokens), action_mask, state_tokens, state_mask, edge_emb, edge_pairs)
+        tokens = tokens + self.ff(self.ln3(tokens))
         tokens = tokens.masked_fill(action_mask[..., None], 0.0)
-
-        if torch.isnan(tokens).any().item():
-            breakpoint()
-
         return tokens
+
+class RelationalCrossAttention(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.head_dim = TOKEN_DIM // REL_ATTENTION_HEADS
+        self.kv = torch.nn.Linear(TOKEN_DIM, 2*TOKEN_DIM)
+        self.q = torch.nn.Linear(TOKEN_DIM, TOKEN_DIM)
+        self.out = torch.nn.Linear(TOKEN_DIM, TOKEN_DIM)
+        self.relation_gain = torch.nn.Parameter(torch.ones(REL_ATTENTION_HEADS))
+
+    def forward(self, action_tokens, action_mask, state_tokens, state_mask, edge_emb, edge_pairs):
+        N = state_tokens.shape[0]
+        L_actions = action_tokens.shape[1]
+        L_state = state_tokens.shape[1]
+        src = edge_pairs[:,0]
+        dst = edge_pairs[:,1]
+        bat = edge_pairs[:,2]
+        k, v = (
+            head.view(N, L_state, REL_ATTENTION_HEADS, self.head_dim).transpose(1,2)
+            for head in self.kv(state_tokens).chunk(2,-1)
+        )
+        q = self.q(action_tokens).view(N, L_actions, REL_ATTENTION_HEADS, self.head_dim).transpose(1,2)
+        a = edge_emb.view(edge_emb.shape[0], REL_ATTENTION_HEADS, self.head_dim) * self.relation_gain[None, :, None]
+        relation_weights = (q.transpose(1,2)[bat, src] * a).sum(-1) * (self.head_dim ** -0.5)
+        bias = state_tokens.new_zeros(N, REL_ATTENTION_HEADS, L_actions, L_state)
+        bias[bat, :, src, dst] = relation_weights
+        bias = bias.masked_fill(state_mask[:, None, None, :], float('-inf'))
+        context_vectors = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=bias)
+        return self.out(context_vectors.transpose(1,2).reshape(N, L_actions, TOKEN_DIM))
 
 class RelationalAttentionBlock(torch.nn.Module):
     def __init__(self):
@@ -106,7 +133,7 @@ class RelationalAttentionBlock(torch.nn.Module):
             torch.nn.Linear(TOKEN_DIM, FEED_FORWARD_DIM),
             torch.nn.GELU(),
             torch.nn.Linear(FEED_FORWARD_DIM, TOKEN_DIM),
-            torch.nn.Dropout(),
+            torch.nn.Dropout(DROPOUT),
         )
 
     def forward(self, batches, mask, edge_emb, edge_pairs):
