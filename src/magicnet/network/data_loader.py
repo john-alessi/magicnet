@@ -141,7 +141,7 @@ class DataLoader():
                     action_decode_indices += [[i_batch, i_action]]
                 if 'edges' in action:
                     for e in action['edges']:
-                        action_edges += [(RELATIONS.index(e['rel']), i_from, id_lookup[e['to']], i_batch)]
+                        action_edges += [(RELATIONS.index(e['rel']), i_action, id_lookup[e['to']], i_batch)]
             
         keys = set(k for k,_,_,_,_ in object_components + event_components + action_components)
         vectors = [v for (_,v,kd,_,_) in object_components + event_components + action_components if kd == 'vector']
