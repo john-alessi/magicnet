@@ -1,4 +1,5 @@
 import torch
+import re
 import numpy as np
 from .constants import *
 from ..dump import is_region
@@ -11,23 +12,21 @@ class DataLoader():
     ):
         self.catalog = catalog
         self.vector_lookup = {}
+        self.card_cache = {}
 
     def load_game(
         self,
         games: list[dict],
     ) -> dict[str, torch.Tensor]:
-        # each game object component should become a [key, value, kind, idx]
-        # vector (where idx corresponds to the parent object index)
-
-        # card_names = set(
-        #     [
-        #         c['name']
-        #         for g in games
-        #         for c in g['state']
-        #         if 'name' in c and c['type'] in ['game_object'] and c['name'] != 'HIDDEN'
-        #     ]
-        # )
-        # card_metadata = self.catalog.lookup(card_names)
+        card_names = set(
+            [
+                c['name']
+                for g in games
+                for c in g['state']
+                if 'name' in c and c['type'] in ['game_object', 'library_card'] and c['name'] != 'HIDDEN'
+            ]
+        )
+        card_metadata = self.catalog.lookup(card_names)
 
         object_components = []
         event_components = []
@@ -41,9 +40,12 @@ class DataLoader():
         unknown_cards_flat = []
         global_token_indices = []
         prompt_token_indices = []
+        mana_cost_component_indices = []
 
         max_L = 0
         decode_max_L = 0
+        mana_max_L = 0
+        mana_N = 0
 
         i = 0
         for i_batch,game in enumerate(games):
@@ -71,10 +73,18 @@ class DataLoader():
         for i_batch,game in enumerate(games):
             for gobj in game['state']:
                 token_type = gobj['type']
-                if 'name' not in gobj and 'zone' in gobj:
+                if is_region(gobj):
                     unknown_cards_flat += [i]
                 if 'zone' in gobj:
                     object_components += [('zone', gobj['zone'], 'categorical', i, token_type)]
+                if 'name' in gobj and 'oracle_id' in gobj and card_metadata[gobj['name']] is not None:
+                    object_components += [('text', gobj['oracle_id'], 'vector', i, token_type)]
+                    mana_cost = expand_mana_cost(card_metadata[gobj['name']].mana_cost, mana_N)
+                    if mana_cost is not None:
+                        object_components += [('mana_cost', mana_cost , 'mana_cost', i, token_type)]
+                        mana_max_L = max(mana_max_L, mana_cost.shape[0])
+                        mana_N += 1
+
                 if 'components' in gobj:
                     for k,v in gobj['components'].items():
                         if k == 'colors':
@@ -145,13 +155,15 @@ class DataLoader():
             
         keys = set(k for k,_,_,_,_ in object_components + event_components + action_components)
         vectors = [v for (_,v,kd,_,_) in object_components + event_components + action_components if kd == 'vector']
-        emb_lookup, offset = self.get_embedding_lookup(keys, vectors)
+        emb_lookup, offset = self.get_embedding_lookup(keys, vectors, card_metadata)
 
         if len(global_token_indices) != len(games):
             raise ValueError(f'found {len(global_token_indices)} global state tokens in {len(games)} games')
+
+        mana_batch_dim = (mana_N, mana_max_L, MANA_SYMBOL_DIM-1)
                         
         return {
-            'state': self.pack_components(object_components, sum(len(g['state']) for g in games)),
+            'state': self.pack_components(object_components, sum(len(g['state']) for g in games), mana_batch_dim),
             'history': self.pack_components(event_components, sum(len(g['history']) for g in games)),
             'actions': self.pack_components(action_components, sum(len([a for a in g['actions'] if 'type' in a]) for g in games)),
             'edges': torch.tensor(edges, dtype=torch.int32),
@@ -191,7 +203,7 @@ class DataLoader():
             'pca': self.catalog.pca(EXTERNAL_EMBEDDING_PCA_DIM),
         }
 
-    def get_embedding_lookup(self, keys: list[str], strings: list[str], return_diff_only=True):
+    def get_embedding_lookup(self, keys: list[str], strings: list[str], card_metadata: list, return_diff_only=True):
         offset = len(self.vector_lookup)
         keys_to_embed = [k for k in keys if k not in self.vector_lookup]
         key_embeddings = dict(zip(keys_to_embed, self.catalog.key_vectors(keys_to_embed))) if keys_to_embed else {}
@@ -201,6 +213,14 @@ class DataLoader():
         string_embeddings = dict(zip(strings_to_embed, self.catalog.embed_strings(strings_to_embed))) if strings_to_embed else {}
         self.vector_lookup |= string_embeddings
 
+        card_embeddings = {
+            c.oracle_id: c.vector
+            for c in card_metadata.values()
+            if c is not None
+            if c.oracle_id not in self.vector_lookup
+        }
+        self.vector_lookup |= card_embeddings
+
         id_list = list(self.vector_lookup)
         key_lookup_indices = torch.tensor([
             id_list.index(k) for k in keys
@@ -208,9 +228,12 @@ class DataLoader():
         string_lookup_indices = torch.tensor([
             id_list.index(s) for s in strings
         ])
+        card_lookup_indices = torch.tensor([
+            id_list.index(c) for c in card_embeddings
+        ])
 
         if return_diff_only:
-            raw_lookup = list(key_embeddings.values()) + list(string_embeddings.values())
+            raw_lookup = list(key_embeddings.values()) + list(string_embeddings.values()) + list(card_embeddings.values())
         else:
             raw_lookup = list(self.vector_lookup.values())
             offset = 0
@@ -219,7 +242,7 @@ class DataLoader():
 
         return lookup_table, offset
 
-    def pack_components(self, components: list, num_tokens: int):
+    def pack_components(self, components: list, num_tokens: int, mana_batch_dim=None):
         id_list = list(self.vector_lookup)
 
         scalars = torch.tensor([
@@ -252,11 +275,36 @@ class DataLoader():
             if kd == 'categorical'
         ],dtype=torch.int32)
 
+        mc = [(i,v) for _,v,kd,i,_ in components if kd == 'mana_cost']
+        mana_cost_indices, mana_cost_matrices = map(list, zip(*mc)) if len(mc) > 0 else (None, None)
+        mana_costs = torch.cat(mana_cost_matrices, dim=0) if len(mc) > 0 else None
+
         return {
             'scalars': scalars,
             'vectors': vectors,
             'colors': colors,
             'flags': flags,
             'categoricals': categoricals,
+            'mana_costs': mana_costs,
             'num_tokens': num_tokens,
+            'mana_cost_indices': torch.tensor(mana_cost_indices) if len(mc) > 0 else None,
+            'num_mana_costs': len(mc),
         }
+
+def expand_mana_cost(mana_cost: str, i):
+    symbol_idx = 'WUBRGSP'
+    if len(mana_cost) > 0:
+        symbols = re.findall(r"(?<=\{)(?:[WUBRGSP]|\d*)(?:\/(?:[WUBRGSP]|\d*))*(?=\})", mana_cost)
+        result = torch.zeros(len(symbols), MANA_SYMBOL_DIM, dtype=torch.float32)
+        result[:,MANA_SYMBOL_DIM-1] = i
+        for i_symbol,s in enumerate(symbols):
+            components = s.split('/')
+            result[i_symbol,MANA_SYMBOL_DIM-2] = i_symbol
+            for c in components:
+                if c.isdigit():
+                    result[i_symbol,MANA_SYMBOL_DIM-3] = int(c)
+                else:
+                    result[i_symbol, symbol_idx.index(c)] = 1
+        return result
+    else:
+        return None
