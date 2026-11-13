@@ -92,12 +92,14 @@ class ComponentSetEncoder(torch.nn.Module):
     ):
         super().__init__()
         self.component_kind_emb = torch.nn.Embedding(len(COMPONENT_KIND_INDEX), COMPONENT_DIM)
+        self.mana_cost_key = torch.nn.Parameter(torch.randn(COMPONENT_DIM))
         self.key_encoder = RawEmbeddingEncoder()
         self.vector_encoder = RawEmbeddingEncoder()
         self.scalar_encoder = ScalarEncoder()
         self.categorical_encoder = CategoricalEncoder()
         self.color_encoder = ColorEncoder()
         self.component_encoder = ObjectComponentEncoder()
+        self.mana_cost_encoder = ManaCostEncoder()
         self.attn = PooledAttention(in_dim=COMPONENT_DIM, out_dim=TOKEN_DIM)
 
     def forward(
@@ -188,6 +190,20 @@ class ComponentSetEncoder(torch.nn.Module):
             )
             indices_list.append(game_state['categoricals'][:,-1],)
 
+        if (game_state['mana_costs'] is not None and game_state['mana_costs'].numel() > 0):
+            symbols = self.mana_cost_encoder(game_state['mana_costs'], game_state['num_mana_costs'])
+            components_list.append(
+                torch.cat(
+                    (
+                        self.mana_cost_key.unsqueeze(0).expand(game_state['num_mana_costs'], COMPONENT_DIM),
+                        symbols,
+                        self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['mana_cost'])).unsqueeze(0).expand(game_state['num_mana_costs'], -1),
+                    )
+                    ,dim=-1
+                )
+            )
+            indices_list.append(game_state['mana_cost_indices'])
+
         components_unordered = self.component_encoder(torch.cat(components_list, dim=0))
         indices_unordered = torch.cat(indices_list).to(torch.int32)
 
@@ -269,14 +285,13 @@ class ColorEncoder(torch.nn.Module):
 class ManaCostEncoder(torch.nn.Module):
     def __init__(
         self,
-        in_dim = 256,
-        out_dim = 256,
     ):
         super().__init__()
+        self.pooled_attention = PooledAttention(in_dim=MANA_SYMBOL_DIM-1, out_dim=COMPONENT_DIM)
 
-    def forward(self, mana: str):
-        # accepts mana in scryfall format
-        raise NotImplementedError
+    def forward(self, mana_symbols: torch.Tensor, num_mana_costs: int):
+        costs = self.pooled_attention(mana_symbols[:,:-1], mana_symbols[:,-1].to(torch.int32), num_mana_costs)
+        return costs
 
 def batch_tokens(tokens, batch_indices, batch_dim):
     order = torch.argsort(batch_indices, stable=True)

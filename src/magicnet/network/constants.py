@@ -18,6 +18,7 @@ POINTER_GLIMPSE_HEADS = 8
 POINTER_TANH_CLIP = 10
 DROPOUT = 0.1
 DEQUANTIZATION_NOISE_GAIN = 0.01
+MANA_SYMBOL_DIM=10
 
 COLOR_WHEEL = ['white', 'blue', 'black', 'red', 'green', 'colorless']
 
@@ -27,4 +28,5 @@ COMPONENT_KIND_INDEX = {
     'color': 2,
     'flag': 3,
     'categorical': 4,
+    'mana_cost': 5,
 }
