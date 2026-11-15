@@ -199,7 +199,7 @@ class ComponentSetEncoder(torch.nn.Module):
                 torch.cat(
                     (
                         self.key_encoder(game_state['categoricals'][:,0], emb_cache), # key
-                        self.categorical_encoder(game_state['categoricals'][:,1:3]), # value
+                        self.categorical_encoder(game_state['categoricals'][:,1]), # value
                         self.component_kind_emb(self.categorical_kind_raw_emb).unsqueeze(0).expand(game_state['categoricals'].shape[0], -1), # kind
                     )
                     ,dim=-1
@@ -246,17 +246,11 @@ class CategoricalEncoder(torch.nn.Module):
         self,
     ):
         super().__init__()
-        self.categorical_emb = torch.nn.ModuleList([
-            torch.nn.Embedding(len(n), COMPONENT_DIM)
-            for n in VOCABS.values()
-        ])
+        emb_dim = sum([len(v) for v in VOCABS.values()])
+        self.categorical_emb = torch.nn.Embedding(emb_dim, COMPONENT_DIM)
 
     def forward(self, x):
-        out = x.new_zeros(*x.shape[:-1], COMPONENT_DIM).to(torch.float32)
-        for cat,emb in enumerate(self.categorical_emb):
-            idx = (x[...,-1] == cat)
-            out[idx] = emb(x[idx][:,0].to(torch.int32))
-        return out
+        return self.categorical_emb(x)
 
 class RawEmbeddingEncoder(torch.nn.Module):
     def __init__(

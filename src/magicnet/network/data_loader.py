@@ -15,6 +15,9 @@ class DataLoader():
         self.vector_lookup = {}
         self.card_cache = {}
         self.per_batch_lookups = per_batch_lookups
+        vocab_sizes = np.array([len(v) for v in VOCABS.values()])
+        offsets = np.cumsum(vocab_sizes) - vocab_sizes
+        self.categorical_offsets = dict(zip(list(VOCABS.keys()), list(offsets)))
 
     def load_game(
         self,
@@ -300,7 +303,7 @@ class DataLoader():
         ],dtype=torch.int32, device='cpu')
 
         categoricals = torch.tensor([
-            [id_list.index(k), vocab_index(vocab_for(k, tt), v), list(VOCABS).index(vocab_for(k, tt)), i]
+            [id_list.index(k), self.get_categorical_embedding_index(k, v, tt), i]
             for (k,v,kd,i,tt) in components
             if kd == 'categorical'
         ],dtype=torch.int32, device='cpu')
@@ -344,6 +347,12 @@ class DataLoader():
             'mana_cost_batch_info': mana_cost_batch_info,
             'component_batch_info': component_batch_info,
         }
+
+    def get_categorical_embedding_index(self, k, v, tt):
+        vocab = vocab_for(k, tt)
+        index = vocab_index(vocab, v)
+        offset = self.categorical_offsets[vocab]
+        return offset + index
 
 def expand_mana_cost(mana_cost: str, i):
     symbol_idx = 'WUBRGSP'

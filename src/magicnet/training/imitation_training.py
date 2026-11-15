@@ -100,15 +100,13 @@ card_map = CardMap.load_or_fit(catalog)
 loader = torch.utils.data.DataLoader(
     ds,
     batch_size=BATCH_SIZE,
-    num_workers=4,
+    num_workers=6,
     collate_fn=Collate(),
     pin_memory=True,
-    prefetch_factor=3,
+    prefetch_factor=4,
 )
 model = MagicNet(persist_embedding_cache=False).to(device)
-model.belief_network.belief_encoder.transformer_blocks.compile(dynamic=True)
-model.belief_network.hidden_card_posterior.flow.compile(dynamic=True)
-model.policy_trunk.transformer_blocks.compile(dynamic=True)
+model.compile(dynamic=True)
 optimizer = torch.optim.AdamW(model.belief_network.parameters(), fused=True, lr=3e-4)
 steps = count_decisions(train) // BATCH_SIZE
 
