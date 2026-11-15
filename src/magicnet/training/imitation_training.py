@@ -4,10 +4,12 @@ import json
 import random
 import os
 import platform
+import time
 from tqdm import tqdm
 from pathlib import Path
 from torch.utils.data import IterableDataset, get_worker_info
 from torch.utils._pytree import tree_map
+from torch._dynamo.utils import counters, compile_times
 
 from ..dump import load_many
 from ..network.data_loader import DataLoader
@@ -17,7 +19,7 @@ from ..network.constants import EXTERNAL_EMBEDDING_PCA_DIM, DEQUANTIZATION_NOISE
 from ..viz import CardMap
 
 BATCH_SIZE = 16
-BELIEF_EPOCHS = 1
+BELIEF_EPOCHS = 0
 POLICY_EPOCHS = 1
 NLL_LOSS_DECAY = 0.01
 
@@ -27,7 +29,7 @@ if os.environ.get('NSYS_PROFILING'):
 torch.manual_seed(42)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 torch.set_float32_matmul_precision('high')
-torch.cuda.set_sync_debug_mode('warn')
+#torch.cuda.set_sync_debug_mode('warn')
 
 class DumpDataset(IterableDataset):
     def __init__(self, shard_files, shuffle_buffer=20000, seed=42):
@@ -107,6 +109,7 @@ loader = torch.utils.data.DataLoader(
 )
 model = MagicNet(persist_embedding_cache=False).to(device)
 model.compile(dynamic=True)
+model.belief_network.compile(dynamic=True)
 optimizer = torch.optim.AdamW(model.belief_network.parameters(), fused=True, lr=3e-4)
 steps = count_decisions(train) // BATCH_SIZE
 
@@ -120,6 +123,8 @@ for epoch in range(BELIEF_EPOCHS):
         #     torch.cuda.profiler.start()
         # if step > 100:
         #     torch.cuda.profiler.stop()
+        # if step % 100 == 0:
+        #     tqdm.write(str({k: dict(v) for k, v in counters.items()})); tqdm.write(compile_times())
         loss_weights = loss_weights.to(device)
         targets = targets.to(device)
         batch = tree_map(lambda x: x.to(device, non_blocking=True) if isinstance(x, torch.Tensor) else x, batch)

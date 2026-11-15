@@ -227,7 +227,7 @@ class DataLoader():
                 dtype=torch.int32,
                 device='cpu',
             ),
-            'action_refs': torch.tensor(action_refs, dtype=torch.int32, device='cpu'),
+            'action_refs': torch.tensor(action_refs, dtype=torch.int32, device='cpu').reshape(-1,3),
             'unknown_cards_flat': torch.tensor(unknown_cards_flat, device='cpu'),
             'global_token_indices': torch.tensor(global_token_indices, device='cpu'),
             'prompt_token_indices': torch.tensor(prompt_token_indices, device='cpu'),
@@ -282,31 +282,31 @@ class DataLoader():
             [id_list.index(k), v, i]
             for (k,v,kd,i,_) in components
             if kd == 'scalar'
-        ],dtype=torch.int32, device='cpu')
+        ],dtype=torch.int32, device='cpu').reshape(-1,3)
 
         vectors = torch.tensor([
             [id_list.index(k), id_list.index(v), i]
             for (k,v,kd,i,_) in components
             if kd == 'vector'
-        ],dtype=torch.int32, device='cpu')
+        ],dtype=torch.int32, device='cpu').reshape(-1,3)
 
         flags = torch.tensor([
             [id_list.index(k), i]
             for (k,_,kd,i,_) in components
             if kd == 'flag' 
-        ],dtype=torch.int32, device='cpu')
+        ],dtype=torch.int32, device='cpu').reshape(-1,2)
 
         colors = torch.tensor([
             [id_list.index(k)] + v + [i]
             for (k,v,kd,i,_) in components
             if kd == 'color' 
-        ],dtype=torch.int32, device='cpu')
+        ],dtype=torch.int32, device='cpu').reshape(-1,8)
 
         categoricals = torch.tensor([
             [id_list.index(k), self.get_categorical_embedding_index(k, v, tt), i]
             for (k,v,kd,i,tt) in components
             if kd == 'categorical'
-        ],dtype=torch.int32, device='cpu')
+        ],dtype=torch.int32, device='cpu').reshape(-1,3)
 
         mc = [(i,v) for _,v,kd,i,_ in components if kd == 'mana_cost']
         num_mana_costs = len(mc)
@@ -323,11 +323,11 @@ class DataLoader():
             mana_cost_indices = torch.empty(0, dtype=torch.int32)
         
         component_indices = torch.cat((
-            scalars if scalars.numel() == 0 else scalars[:,-1],
-            vectors if vectors.numel() == 0 else vectors[:,-1],
-            flags if flags.numel() == 0 else flags[:,-1],
-            colors if colors.numel() == 0 else colors[:,-1],
-            categoricals if categoricals.numel() == 0 else categoricals[:,-1],
+            scalars[:,-1],
+            vectors[:,-1],
+            flags[:,-1],
+            colors[:,-1],
+            categoricals[:,-1],
             mana_cost_indices,
         ))
         component_batch_info = get_batch_info(num_tokens, comp_max_L, component_indices, last_dim=COMPONENT_DIM)
