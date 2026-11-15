@@ -6,9 +6,12 @@ from .distributions import HiddenCardPosterior
 from .output_heads import ValueHead, PolicyHead
 
 class MagicNet(torch.nn.Module):
-    def __init__(self):
+    def __init__(
+        self,
+        persist_embedding_cache = True,
+    ):
         super().__init__()
-        self.emb_cache = EmbeddingCache()
+        self.emb_cache = EmbeddingCache(persist_embedding_cache)
         self.hidden_card_component_key = torch.nn.Parameter(torch.randn(COMPONENT_DIM))
         self.belief_network = BeliefNetwork(self.emb_cache)
         self.policy_trunk = GameStateEncoder(n_blocks=POLICY_TRUNK_LAYERS)
@@ -41,9 +44,10 @@ class BeliefNetwork(torch.nn.Module):
     def __init__(
         self,
         emb_cache = None,
+        persist_embedding_cache = True,
     ):
         super().__init__()
-        self.emb_cache = emb_cache or EmbeddingCache()
+        self.emb_cache = emb_cache or EmbeddingCache(persist_embedding_cache)
         self.belief_encoder = GameStateEncoder(n_blocks=BELIEF_NETWORK_LAYERS)
         self.hidden_card_posterior = HiddenCardPosterior()
 
@@ -55,7 +59,7 @@ class BeliefNetwork(torch.nn.Module):
         n_samples: torch.Tensor = 0,
         update_cache=True,
     ):
-        emb_cache = self.emb_cache(game_state) if update_cache else self.emb_cache.table
+        emb_cache = self.emb_cache(game_state) if update_cache or self.emb_cache.persist_between_passes == False else self.emb_cache.table
         belief_state, _ = self.belief_encoder(game_state, emb_cache)
         likelihood, samples = self.hidden_card_posterior(
             belief_state,
@@ -67,12 +71,17 @@ class BeliefNetwork(torch.nn.Module):
         return likelihood, samples
 
 class EmbeddingCache(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, persist_between_passes = True):
         super().__init__()
-        self.register_buffer('table', torch.empty(0, EXTERNAL_EMBEDDING_DIM, dtype=torch.float32), persistent=False)
+        self.persist_between_passes = persist_between_passes
+        if persist_between_passes:
+            self.register_buffer('table', torch.empty(0, EXTERNAL_EMBEDDING_DIM, dtype=torch.float32), persistent=False)
     
     def forward(self, game_state: dict[str, torch.Tensor]):
-        if self.table.shape[0] != game_state['emb_lookup_offset']:
-            raise ValueError(f'offset {game_state['emb_lookup_offset']} out of sync with cache size {self.table.shape[0]}')
-        self.table = torch.cat((self.table, game_state['emb_lookup']))
-        return self.table
+        if self.persist_between_passes:
+            if self.table.shape[0] != game_state['emb_lookup_offset']:
+                raise ValueError(f'offset {game_state['emb_lookup_offset']} out of sync with cache size {self.table.shape[0]}')
+            self.table = torch.cat((self.table, game_state['emb_lookup']))
+            return self.table
+        else:
+            return game_state['emb_lookup']

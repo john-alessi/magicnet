@@ -15,7 +15,7 @@ class ValueHead(torch.nn.Module):
         )
 
     def forward(self, x: torch.Tensor, global_token_indices: torch.Tensor):
-        tokens = x[torch.arange(x.size(0)),global_token_indices]
+        tokens = x[torch.arange(x.size(0), device=x.device),global_token_indices]
         return self.mlp(tokens)
 
 class PolicyHead(torch.nn.Module):
@@ -31,10 +31,10 @@ class PolicyHead(torch.nn.Module):
         decisions: torch.Tensor,
         decisions_mask: torch.Tensor,
     ):
-        batch_dim = game_state['decode_batch_dim']
-        prompt_tokens = policy_state[torch.arange(batch_dim[0]), game_state['prompt_token_indices']]
+        batch_dim = game_state['decode_batch_info']['dim']
+        prompt_tokens = policy_state[torch.arange(batch_dim[0], device=policy_state.device), game_state['prompt_token_indices']]
         candidates = policy_state.new_zeros(batch_dim)
-        candidates_mask = torch.ones(batch_dim[0], batch_dim[1], dtype=torch.bool)
+        candidates_mask = policy_state.new_ones(batch_dim[0], batch_dim[1], dtype=torch.bool)
         
         if game_state['action_refs'].numel() > 0:
             candidates[game_state['action_refs'][:,0], game_state['action_refs'][:,2]] = policy_state[game_state['action_refs'][:,0], game_state['action_refs'][:,1]]
