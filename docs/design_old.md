@@ -1,14 +1,5 @@
-# MagicNet
-
-## Related Work
-- [CardsFormer](https://www.researchgate.net/publication/374299909_Cardsformer_Grounding_Language_to_Learn_a_Generalizable_Policy_in_Hearthstone) - RL-trained policy capable of playing HearthStone.
-- [Flow++](https://arxiv.org/abs/1902.00275)
-- [Set Transformers](https://arxiv.org/abs/1810.00825)
-- [Neural Spline Flows](https://arxiv.org/abs/1906.04032)
-- [Pointer Networks](https://arxiv.org/abs/1506.03134)
-- [V-JEPA 2](https://arxiv.org/abs/2506.09985)
-- [Understanding the Success of Perfect Information Monte Carlo Sampling in Game Tree Search](https://ojs.aaai.org/index.php/AAAI/article/view/7562)
-- [Relation-Aware Self-Attention](https://arxiv.org/abs/2008.12736)
+# MagicNet [DEPRECATED]
+* this design doc is outdated, I'm just keeping it around for historical reasons.
 
 ## Game Representation
 

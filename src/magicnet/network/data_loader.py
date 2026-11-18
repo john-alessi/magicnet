@@ -236,7 +236,7 @@ class DataLoader():
             'decode_batch_info': decode_batch_info,
             'emb_lookup': emb_lookup,
             'emb_lookup_offset': offset,
-            'pca': self.catalog.pca(EXTERNAL_EMBEDDING_PCA_DIM),
+            #'pca': self.catalog.pca(EXTERNAL_EMBEDDING_PCA_DIM),
         }
 
     def get_embedding_lookup(self, keys: list[str], strings: list[str], card_metadata: list):

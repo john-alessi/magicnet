@@ -1,0 +1,14 @@
+# Related Work
+
+[Scalable Decision Making for Games of Imperfect Information](https://arxiv.org/abs/2511.07312): Sokota et. al. train a policy-value network to play Stratego via self-play RL coupled with a belief network trained to jointly sample full potential board states as starting nodes for test-time search.  This architecture beat Stratego world champion Pim Niemeijer 15-1-4.  This approach maps well to Magic as inferring opponent's hidden pieces based on their behavior is a significant part of both games.  Whether or not the belief sampling scales to ([reasonably-sized](https://www.wargamer.com/magic-the-gathering/2000-card-deck-whtz)) Magic decks is an open question.
+
+[Self-Attention with Relative Position Representations](https://arxiv.org/abs/1803.02155) Shaw et. al. introduce relative positional embeddings as an alternative to absolute positions in language transformers, and more importantly propose the use of additive embeddings to represent distinct relation types.  This has potential applications to representing relationships between cards (e.g. "[Arclight Phoenix](https://scryfall.com/card/rvr/100/arclight-phoenix) is exiled under [Leyline Binding](https://scryfall.com/card/dmu/24/leyline-binding)") as well as past game actions whose parameters may have moved zones.
+
+[Attention, Learn to Solve Routing Problems!](https://arxiv.org/abs/1803.08475): Kool et. al. propose an attention-based improvement over [Vinyals et. al.'s](https://arxiv.org/abs/1506.03134) Pointer Net which directly uses attention scores between a query and elements of an input sequence as output logits.  This addresses several key decoding constraints imposed by Magic:
+1) Enumerating the game's large combinatorial action space is intractible.
+2) Some decisions involve selecting an action while others involve selecting a specific entity in the input sequence (choosing a target, a card to discard, etc.).
+3) Cards/effects/abilities are an open vocabulary which rules out fixed-cardinality one-hot decoding.
+
+[Set Transformer: A Framework for Attention-based Permutation-Invariant Neural Networks](https://arxiv.org/abs/1810.00825): Lee et. al. demonstrate that attention-based pooling as a set aggregation mechanism allows a model to retain information from specific set members that's relevant to a downstream task.  This allows for a flexible representation of entities and actions in a game of magic as bags of components such as oracle text, zone, marked damage, etc.
+
+[Neural Spline Flows](https://arxiv.org/abs/1906.04032): Durkan et. al. propose a fully-differentiable approach to normalizing flow parameterization.  A major goal of this project is to explore the use of smooth multimodal posterior distributions in card-text embedding space to model hidden cards as opposed to discrete softmax probabilities.

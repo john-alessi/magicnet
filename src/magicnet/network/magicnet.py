@@ -8,12 +8,13 @@ from .output_heads import ValueHead, PolicyHead
 class MagicNet(torch.nn.Module):
     def __init__(
         self,
+        pca_basis,
         persist_embedding_cache = True,
     ):
         super().__init__()
         self.emb_cache = EmbeddingCache(persist_embedding_cache)
         self.hidden_card_component_key = torch.nn.Parameter(torch.randn(COMPONENT_DIM))
-        self.belief_network = BeliefNetwork(self.emb_cache)
+        self.belief_network = BeliefNetwork(pca_basis, self.emb_cache)
         self.policy_trunk = GameStateEncoder(n_blocks=POLICY_TRUNK_LAYERS)
         self.decision_encoder = DecisionEncoder(n_blocks=DECISION_ENCODER_LAYERS)
         self.value_head = ValueHead()
@@ -43,13 +44,14 @@ class MagicNet(torch.nn.Module):
 class BeliefNetwork(torch.nn.Module):
     def __init__(
         self,
+        pca_basis,
         emb_cache = None,
         persist_embedding_cache = True,
     ):
         super().__init__()
         self.emb_cache = emb_cache or EmbeddingCache(persist_embedding_cache)
         self.belief_encoder = GameStateEncoder(n_blocks=BELIEF_NETWORK_LAYERS)
-        self.hidden_card_posterior = HiddenCardPosterior()
+        self.hidden_card_posterior = HiddenCardPosterior(pca_basis)
 
     def forward(
         self,
@@ -64,7 +66,6 @@ class BeliefNetwork(torch.nn.Module):
         likelihood, samples = self.hidden_card_posterior(
             belief_state,
             game_state['unknown_cards'] if n_samples == 0 else game_state['unknown_cards_sampling'],
-            game_state['pca'],
             targets=targets,
             n_samples=n_samples,
         )
