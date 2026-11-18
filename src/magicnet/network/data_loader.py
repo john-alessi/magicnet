@@ -9,10 +9,15 @@ class DataLoader():
     def __init__(
         self,
         catalog: any,
+        per_batch_lookups = False,
     ):
         self.catalog = catalog
         self.vector_lookup = {}
         self.card_cache = {}
+        self.per_batch_lookups = per_batch_lookups
+        vocab_sizes = np.array([len(v) for v in VOCABS.values()])
+        offsets = np.cumsum(vocab_sizes) - vocab_sizes
+        self.categorical_offsets = dict(zip(list(VOCABS.keys()), list(offsets)))
 
     def load_game(
         self,
@@ -46,42 +51,49 @@ class DataLoader():
         decode_max_L = 0
         mana_max_L = 0
         mana_N = 0
+        object_components_max_L = 0
+        event_components_max_L = 0
+        action_components_components_max_L = 0
 
         i = 0
         for i_batch,game in enumerate(games):
             max_L = max(max_L, len(game['state']) + len(game['history']))
             decode_max_L = max(decode_max_L, len(game['actions']))
             for event in game['history']:
+                comp = []
                 token_type = event['type']
                 if 'components' in event:
                     for k,v in event['components'].items():
                         if vocab_for(k, token_type):
-                            event_components += [(k, v, 'categorical', i, token_type)]
+                            comp += [(k, v, 'categorical', i, token_type)]
                         elif isinstance(v, bool) and v is True:
-                            event_components += [(k, None, 'flag', i, token_type)]
+                            comp += [(k, None, 'flag', i, token_type)]
                         elif isinstance(v, (int,float)):
-                            event_components += [(k, v, 'scalar', i, token_type)]
+                            comp += [(k, v, 'scalar', i, token_type)]
                         elif isinstance(v, list):
                             for f in v:
-                                event_components += [(k, f, 'vector', i, token_type)]
+                                comp += [(k, f, 'vector', i, token_type)]
                         else:
-                            event_components += [(k, v, 'vector', i, token_type)]
+                            comp += [(k, v, 'vector', i, token_type)]
                 encode_batch_indices += [i_batch]
+                event_components_max_L = max(event_components_max_L, len(comp))
+                event_components += comp
                 i += 1
 
         i = 0 
         for i_batch,game in enumerate(games):
             for gobj in game['state']:
+                comp = []
                 token_type = gobj['type']
                 if is_region(gobj):
                     unknown_cards_flat += [i]
                 if 'zone' in gobj:
-                    object_components += [('zone', gobj['zone'], 'categorical', i, token_type)]
+                    comp += [('zone', gobj['zone'], 'categorical', i, token_type)]
                 if 'name' in gobj and 'oracle_id' in gobj and card_metadata[gobj['name']] is not None:
-                    object_components += [('text', gobj['oracle_id'], 'vector', i, token_type)]
+                    comp += [('text', gobj['oracle_id'], 'vector', i, token_type)]
                     mana_cost = expand_mana_cost(card_metadata[gobj['name']].mana_cost, mana_N)
                     if mana_cost is not None:
-                        object_components += [('mana_cost', mana_cost , 'mana_cost', i, token_type)]
+                        comp += [('mana_cost', mana_cost , 'mana_cost', i, token_type)]
                         mana_max_L = max(mana_max_L, mana_cost.shape[0])
                         mana_N += 1
 
@@ -92,41 +104,46 @@ class DataLoader():
                                 int(c in v)
                                 for c in COLOR_WHEEL
                             ]
-                            object_components += [(k, onehot, 'color', i, token_type)]
+                            comp += [(k, onehot, 'color', i, token_type)]
                         elif vocab_for(k, token_type):
-                            object_components += [(k, v, 'categorical', i, token_type)]
+                            comp += [(k, v, 'categorical', i, token_type)]
                         elif isinstance(v, bool) and v is True:
-                            object_components += [(k, None, 'flag', i, token_type)]
+                            comp += [(k, None, 'flag', i, token_type)]
                         elif isinstance(v, (int,float)):
-                            object_components += [(k, v, 'scalar', i, token_type)]
+                            comp += [(k, v, 'scalar', i, token_type)]
                         elif isinstance(v, list):
                             for f in v:
-                                object_components += [(k, f, 'vector', i, token_type)]
+                                comp += [(k, f, 'vector', i, token_type)]
                         else:
-                            object_components += [(k, v, 'vector', i, token_type)]
+                            comp += [(k, v, 'vector', i, token_type)]
                 i += 1
                 encode_batch_indices += [i_batch]
+                object_components_max_L = max(object_components_max_L, len(comp))
+                object_components += comp
 
         i = 0
         for i_batch,game in enumerate(games):
             for action in game['actions']:
                 if 'type' in action:
+                    comp = []
                     token_type = action['type']
                     if 'components' in action:
                         for k,v in action['components'].items():
                             if vocab_for(k, token_type):
-                                action_components += [(k, v, 'categorical', i, token_type)]
+                                comp += [(k, v, 'categorical', i, token_type)]
                             elif isinstance(v, bool) and v is True:
-                                action_components += [(k, None, 'flag', i, token_type)]
+                                comp += [(k, None, 'flag', i, token_type)]
                             elif isinstance(v, (int,float)):
-                                action_components += [(k, v, 'scalar', i, token_type)]
+                                comp += [(k, v, 'scalar', i, token_type)]
                             elif isinstance(v, list):
                                 for f in v:
-                                    action_components += [(k, f, 'vector', i, token_type)]
+                                    comp += [(k, f, 'vector', i, token_type)]
                             else:
-                                action_components += [(k, v, 'vector', i, token_type)]
+                                comp += [(k, v, 'vector', i, token_type)]
                     decode_batch_indices += [i_batch]
                     i += 1
+                    action_components_components_max_L = max(action_components_components_max_L, len(comp))
+                    action_components += comp
 
         for i_batch,game in enumerate(games):
             id_lookup = {}
@@ -155,19 +172,38 @@ class DataLoader():
             
         keys = set(k for k,_,_,_,_ in object_components + event_components + action_components)
         vectors = [v for (_,v,kd,_,_) in object_components + event_components + action_components if kd == 'vector']
-        emb_lookup, offset = self.get_embedding_lookup(keys, vectors, card_metadata)
+        emb_lookup, offset, id_list = self.get_embedding_lookup(keys, vectors, card_metadata)
 
         if len(global_token_indices) != len(games):
             raise ValueError(f'found {len(global_token_indices)} global state tokens in {len(games)} games')
 
         mana_batch_dim = (mana_N, mana_max_L, MANA_SYMBOL_DIM-1)
+
+        encode_batch_info = get_batch_info(len(games), max_L, torch.tensor(encode_batch_indices))
+        decode_batch_info = get_batch_info(len(games), decode_max_L, torch.tensor(decode_batch_indices))
                         
         return {
-            'state': self.pack_components(object_components, sum(len(g['state']) for g in games), mana_batch_dim),
-            'history': self.pack_components(event_components, sum(len(g['history']) for g in games)),
-            'actions': self.pack_components(action_components, sum(len([a for a in g['actions'] if 'type' in a]) for g in games)),
-            'edges': torch.tensor(edges, dtype=torch.int32),
-            'action_edges': torch.tensor(action_edges, dtype=torch.int32),
+            'state': self.pack_components(
+                object_components,
+                sum(len(g['state']) for g in games),
+                object_components_max_L,
+                id_list,
+                mana_max_L
+            ),
+            'history': self.pack_components(
+                event_components,
+                sum(len(g['history']) for g in games),
+                event_components_max_L,
+                id_list
+            ),
+            'actions': self.pack_components(
+                action_components,
+                sum(len([a for a in g['actions'] if 'type' in a]) for g in games),
+                action_components_components_max_L,
+                id_list
+            ),
+            'edges': torch.tensor(edges, dtype=torch.int32, device='cpu'),
+            'action_edges': torch.tensor(action_edges, dtype=torch.int32, device='cpu'),
             'unknown_cards': torch.tensor(
                 [
                     (b,i)
@@ -179,6 +215,7 @@ class DataLoader():
                     )
                 ],
                 dtype=torch.int32,
+                device='cpu',
             ),
             'unknown_cards_sampling': torch.tensor(
                 [
@@ -188,96 +225,112 @@ class DataLoader():
                     if is_region(c)
                 ],
                 dtype=torch.int32,
+                device='cpu',
             ),
-            'action_refs': torch.tensor(action_refs, dtype=torch.int32),
-            'unknown_cards_flat': torch.tensor(unknown_cards_flat),
-            'global_token_indices': torch.tensor(global_token_indices),
-            'prompt_token_indices': torch.tensor(prompt_token_indices),
-            'batch_indices': torch.tensor(encode_batch_indices),
-            'decode_batch_indices': torch.tensor(decode_batch_indices),
-            'action_decode_indices': torch.tensor(action_decode_indices, dtype=torch.int32),
-            'batch_dim': (len(games), max_L, TOKEN_DIM),
-            'decode_batch_dim': (len(games), decode_max_L, TOKEN_DIM),
+            'action_refs': torch.tensor(action_refs, dtype=torch.int32, device='cpu').reshape(-1,3),
+            'unknown_cards_flat': torch.tensor(unknown_cards_flat, device='cpu'),
+            'global_token_indices': torch.tensor(global_token_indices, device='cpu'),
+            'prompt_token_indices': torch.tensor(prompt_token_indices, device='cpu'),
+            'action_decode_indices': torch.tensor(action_decode_indices, dtype=torch.int32, device='cpu'),
+            'encode_batch_info': encode_batch_info,
+            'decode_batch_info': decode_batch_info,
             'emb_lookup': emb_lookup,
             'emb_lookup_offset': offset,
-            'pca': self.catalog.pca(EXTERNAL_EMBEDDING_PCA_DIM),
+            #'pca': self.catalog.pca(EXTERNAL_EMBEDDING_PCA_DIM),
         }
 
-    def get_embedding_lookup(self, keys: list[str], strings: list[str], card_metadata: list, return_diff_only=True):
-        offset = len(self.vector_lookup)
-        keys_to_embed = [k for k in keys if k not in self.vector_lookup]
+    def get_embedding_lookup(self, keys: list[str], strings: list[str], card_metadata: list):
+        offset = 0 if self.per_batch_lookups else len(self.vector_lookup)
+        lookup = {} if self.per_batch_lookups else self.vector_lookup
+        keys_to_embed = keys if self.per_batch_lookups else [k for k in keys if k not in lookup]
         key_embeddings = dict(zip(keys_to_embed, self.catalog.key_vectors(keys_to_embed))) if keys_to_embed else {}
-        self.vector_lookup |= key_embeddings
+        lookup |= key_embeddings
 
-        strings_to_embed = [s for s in strings if s not in self.vector_lookup]
+        strings_to_embed = [s for s in strings if s not in lookup]
         string_embeddings = dict(zip(strings_to_embed, self.catalog.embed_strings(strings_to_embed))) if strings_to_embed else {}
-        self.vector_lookup |= string_embeddings
+        lookup |= string_embeddings
 
         card_embeddings = {
             c.oracle_id: c.vector
             for c in card_metadata.values()
             if c is not None
-            if c.oracle_id not in self.vector_lookup
+        } if self.per_batch_lookups else {
+            c.oracle_id: c.vector
+            for c in card_metadata.values()
+            if c is not None
+            if c.oracle_id not in lookup
         }
-        self.vector_lookup |= card_embeddings
+        lookup |= card_embeddings
 
-        id_list = list(self.vector_lookup)
-        key_lookup_indices = torch.tensor([
-            id_list.index(k) for k in keys
-        ])
-        string_lookup_indices = torch.tensor([
-            id_list.index(s) for s in strings
-        ])
-        card_lookup_indices = torch.tensor([
-            id_list.index(c) for c in card_embeddings
-        ])
+        if not self.per_batch_lookups:
+            self.vector_lookup |= lookup
 
-        if return_diff_only:
-            raw_lookup = list(key_embeddings.values()) + list(string_embeddings.values()) + list(card_embeddings.values())
-        else:
-            raw_lookup = list(self.vector_lookup.values())
-            offset = 0
-                
-        lookup_table = torch.tensor(np.stack(raw_lookup), dtype=torch.float32) if raw_lookup else torch.empty(0)
+        id_list = list(key_embeddings) + list(string_embeddings) + list(card_embeddings)
+        raw_lookup = list(key_embeddings.values()) + list(string_embeddings.values()) + list(card_embeddings.values())   
+        lookup_table = torch.tensor(np.stack(raw_lookup), dtype=torch.float32, device='cpu') if raw_lookup else torch.empty(0, device='cpu')
+        return lookup_table, offset, id_list
 
-        return lookup_table, offset
-
-    def pack_components(self, components: list, num_tokens: int, mana_batch_dim=None):
-        id_list = list(self.vector_lookup)
-
+    def pack_components(
+        self,
+        components: list,
+        num_tokens: int,
+        comp_max_L: int,
+        id_list: list,
+        mana_max_L=0
+    ):
         scalars = torch.tensor([
             [id_list.index(k), v, i]
             for (k,v,kd,i,_) in components
             if kd == 'scalar'
-        ],dtype=torch.int32)
+        ],dtype=torch.int32, device='cpu').reshape(-1,3)
 
         vectors = torch.tensor([
             [id_list.index(k), id_list.index(v), i]
             for (k,v,kd,i,_) in components
             if kd == 'vector'
-        ],dtype=torch.int32)
+        ],dtype=torch.int32, device='cpu').reshape(-1,3)
 
         flags = torch.tensor([
             [id_list.index(k), i]
             for (k,_,kd,i,_) in components
             if kd == 'flag' 
-        ],dtype=torch.int32)
+        ],dtype=torch.int32, device='cpu').reshape(-1,2)
 
         colors = torch.tensor([
             [id_list.index(k)] + v + [i]
             for (k,v,kd,i,_) in components
             if kd == 'color' 
-        ],dtype=torch.int32)
+        ],dtype=torch.int32, device='cpu').reshape(-1,8)
 
         categoricals = torch.tensor([
-            [id_list.index(k), vocab_index(vocab_for(k, tt), v), list(VOCABS).index(vocab_for(k, tt)), i]
+            [id_list.index(k), self.get_categorical_embedding_index(k, v, tt), i]
             for (k,v,kd,i,tt) in components
             if kd == 'categorical'
-        ],dtype=torch.int32)
+        ],dtype=torch.int32, device='cpu').reshape(-1,3)
 
         mc = [(i,v) for _,v,kd,i,_ in components if kd == 'mana_cost']
-        mana_cost_indices, mana_cost_matrices = map(list, zip(*mc)) if len(mc) > 0 else (None, None)
-        mana_costs = torch.cat(mana_cost_matrices, dim=0) if len(mc) > 0 else None
+        num_mana_costs = len(mc)
+        if num_mana_costs > 0:
+            mana_cost_indices, mana_cost_matrices = map(list, zip(*mc))
+            mana_cost_indices = torch.tensor(mana_cost_indices, dtype=torch.int32)
+            mana_costs = torch.cat(mana_cost_matrices, dim=0)
+            mana_cost_cost_indices = mana_costs[:,-1].to(torch.int32)
+            mana_cost_batch_info = get_batch_info(num_mana_costs, mana_max_L, mana_cost_cost_indices, last_dim=COMPONENT_DIM)
+            mana_costs = mana_costs[:,:-1]
+        else:
+            mana_costs = None
+            mana_cost_batch_info = None
+            mana_cost_indices = torch.empty(0, dtype=torch.int32)
+        
+        component_indices = torch.cat((
+            scalars[:,-1],
+            vectors[:,-1],
+            flags[:,-1],
+            colors[:,-1],
+            categoricals[:,-1],
+            mana_cost_indices,
+        ))
+        component_batch_info = get_batch_info(num_tokens, comp_max_L, component_indices, last_dim=COMPONENT_DIM)
 
         return {
             'scalars': scalars,
@@ -287,15 +340,25 @@ class DataLoader():
             'categoricals': categoricals,
             'mana_costs': mana_costs,
             'num_tokens': num_tokens,
-            'mana_cost_indices': torch.tensor(mana_cost_indices) if len(mc) > 0 else None,
-            'num_mana_costs': len(mc),
+            'mana_cost_indices': mana_cost_indices if num_mana_costs > 0 else None,
+            #'num_mana_costs': num_mana_costs,
+            #'mana_max_L': mana_max_L,
+            'components_max_L': comp_max_L,
+            'mana_cost_batch_info': mana_cost_batch_info,
+            'component_batch_info': component_batch_info,
         }
+
+    def get_categorical_embedding_index(self, k, v, tt):
+        vocab = vocab_for(k, tt)
+        index = vocab_index(vocab, v)
+        offset = self.categorical_offsets[vocab]
+        return offset + index
 
 def expand_mana_cost(mana_cost: str, i):
     symbol_idx = 'WUBRGSP'
     if len(mana_cost) > 0:
         symbols = re.findall(r"(?<=\{)(?:[WUBRGSP]|\d*)(?:\/(?:[WUBRGSP]|\d*))*(?=\})", mana_cost)
-        result = torch.zeros(len(symbols), MANA_SYMBOL_DIM, dtype=torch.float32)
+        result = torch.zeros(len(symbols), MANA_SYMBOL_DIM, dtype=torch.float32, device='cpu')
         result[:,MANA_SYMBOL_DIM-1] = i
         for i_symbol,s in enumerate(symbols):
             components = s.split('/')
@@ -308,3 +371,22 @@ def expand_mana_cost(mana_cost: str, i):
         return result
     else:
         return None
+
+def get_batch_info(N: int, max_L: int, indices: torch.Tensor, last_dim=TOKEN_DIM):
+    batch_dim = (N, max_L, last_dim)
+    order = torch.argsort(indices, stable=True)
+    counts = torch.bincount(indices, minlength=batch_dim[0])
+    start_indices = torch.cumsum(counts, dim=0) - counts
+    positions = torch.arange(len(indices)) - start_indices[indices[order]]
+    mask = torch.ones(*batch_dim[:-1], dtype=torch.bool)
+    mask[indices[order], positions] = False
+
+    return {
+        'dim': batch_dim,
+        'indices': indices,
+        'order': order,
+        'counts': counts,
+        'start_indices': start_indices,
+        'positions': positions,
+        'mask': mask,
+    }

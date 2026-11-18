@@ -43,8 +43,14 @@ class PooledAttention(torch.nn.Module):
         )
         self.out = torch.nn.Linear(out_dim, out_dim)
 
-    def forward(self, components_unordered, indices_unordered, num_tokens):
-        padded, mask = self.group_components(components_unordered, indices_unordered, num_tokens)
+    def forward(self, components_unordered, batch_info):
+        #padded, mask = self.group_components(components_unordered, indices_unordered, num_tokens, max_L_tokens)
+        order = batch_info['order']
+        indices = batch_info['indices']
+        positions = batch_info['positions']
+        padded = components_unordered.new_zeros(batch_info['dim'])
+        padded[indices[order], positions] = components_unordered[order]
+        mask = batch_info['mask']
         n_objects, L, _ = padded.shape
         k = self.k(padded).view(n_objects, L, self.n_heads, self.dh)
         v = self.v(padded).view(n_objects, L, self.n_heads, self.dv)
@@ -53,20 +59,6 @@ class PooledAttention(torch.nn.Module):
         attn_weights = torch.softmax(attn_scores, dim=-1).nan_to_num(0.0)
         game_objects = torch.einsum('nhl,nlhd->nhd', attn_weights, v).reshape(n_objects, self.out_dim)
         return self.out(game_objects)
-
-
-    def group_components(self, components_unordered, indices_unordered, num_tokens):
-        order = torch.argsort(indices_unordered, stable=True)
-        components = components_unordered[order]
-        indices = indices_unordered[order]
-        counts = torch.bincount(indices, minlength=num_tokens)
-        start_indices = torch.cumsum(counts, 0) - counts
-        positions = torch.arange(len(indices)) - start_indices[indices]
-        padded = components.new_zeros(num_tokens, counts.max(), components.shape[-1])
-        padded[indices, positions] = components
-        mask = torch.zeros(num_tokens, padded.shape[1], dtype=torch.bool)
-        mask[indices, positions] = True
-        return padded, mask
 
 class RelationalCrossAttentionBlock(torch.nn.Module):
     def __init__(self):

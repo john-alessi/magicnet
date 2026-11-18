@@ -1,0 +1,4 @@
+All experiments were run with the following specs unless otherwise noted:
+GPU: EVGA FTW3 ULTRA GAMING GeForce RTX 3080 10GB
+CPU: Intel Core i5-12600K 3.7 GHz
+RAM: Crucial Ballistix 32 GB (2 x 16 GB) DDR4-3200 CL16

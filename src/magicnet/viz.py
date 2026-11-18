@@ -40,6 +40,10 @@ Training-loop usage (once per epoch)::
                         card_map=card_map)
     # -> viz/epoch007_board.png, viz/epoch007_belief.png
 
+    # or straight into the active MLflow run (no local file), plus per-region
+    # mass_on_true / tv metrics at that step:
+    viz.log_belief(d, samples, card_map, step=step)   # -> artifacts belief/step0003000_g3_d271.png
+
 Command line: ``uv run scripts/render_decision.py --help``.
 """
 
@@ -1075,6 +1079,49 @@ def render_belief(decision: dump.Decision, samples, card_map: CardMap, path: str
     d = decision
     path = Path(path) if path is not None else Path(f"belief_g{d.game}_d{d.decision}.png")
     path.parent.mkdir(parents=True, exist_ok=True)
+    fig, _ = _belief_figure(d, samples, card_map, top_k=top_k, max_true_labels=max_true_labels, dpi=dpi,
+                            method=method, title=title)
+    fig.savefig(path, dpi=dpi)
+    plt.close(fig)
+    return path
+
+
+def log_belief(decision: dump.Decision, samples, card_map: CardMap, step: int, *,
+               artifact_dir: str = "belief", tag: str | None = None, log_metrics: bool = True,
+               top_k: int = 12, max_true_labels: int = 10, dpi: int = 100, method: str = "knn",
+               title: str | None = None) -> dict[str, dict[str, float]]:
+    """:func:`render_belief`, logged straight into the active MLflow run (no
+    local file) as ``<artifact_dir>/step<step>_g<game>_d<decision>[_<tag>].png``.
+
+    With *log_metrics*, each region's "mass on true cards" and TV distance
+    are also logged as ``<artifact_dir>/<tag or g_d>/<region>/{mass_on_true,tv}``
+    at *step*. Returns those per-region stats. Requires an active run
+    (``mlflow.start_run()``).
+    """
+    import mlflow
+
+    if mlflow.active_run() is None:
+        raise RuntimeError("log_belief needs an active MLflow run (mlflow.start_run())")
+    plt = _plt()
+    d = decision
+    fig, stats = _belief_figure(d, samples, card_map, top_k=top_k, max_true_labels=max_true_labels, dpi=dpi,
+                                method=method, title=title or f"step {step} · game {d.game} · decision {d.decision}")
+    name = tag or f"g{d.game}_d{d.decision}"
+    try:
+        mlflow.log_figure(fig, f"{artifact_dir}/step{step:07d}_{name}.png")
+    finally:
+        plt.close(fig)
+    if log_metrics:
+        mlflow.log_metrics({f"{artifact_dir}/{name}/{rid.replace(':', '_')}/{k}": v
+                            for rid, s in stats.items() for k, v in s.items() if v == v}, step=step)
+    return stats
+
+
+def _belief_figure(d: dump.Decision, samples, card_map: CardMap, *, top_k: int, max_true_labels: int, dpi: int,
+                   method: str, title: str | None):
+    """Build the :func:`render_belief` figure; returns ``(fig, {region: {mass_on_true, tv}})``."""
+    plt = _plt()
+    stats: dict[str, dict[str, float]] = {}
     smp = _norm_samples(d, samples, card_map)
     truth = {t.get("region"): t for t in (d.hidden_truth or [])}
     regs = [t for t in regions(d) if t["id"] in smp or t["id"] in truth] or [{"id": k} for k in smp]
@@ -1154,6 +1201,8 @@ def render_belief(decision: dump.Decision, samples, card_map: CardMap, path: str
         hit = sum(v for i, v in pred_frac.items() if i in true_frac)
         tv = (0.5 * sum(abs(pred_frac.get(i, 0) - true_frac.get(i, 0)) for i in set(pred_frac) | set(true_frac))
               if true_frac else float("nan"))
+        if len(z):
+            stats[rid] = {"mass_on_true": float(hit), "tv": float(tv)}
         if cards:
             yy = np.arange(len(cards))
             bx.barh(yy - 0.2, [pred_frac.get(i, 0) for i in cards], height=0.38, color="#d9822b",
@@ -1175,13 +1224,11 @@ def render_belief(decision: dump.Decision, samples, card_map: CardMap, path: str
         if not true_cards:
             bx.text(0.98, 0.5, "empty region (no true cards)", ha="right", va="center", transform=bx.transAxes,
                     fontsize=10, color="#888")
-        stats = (f"mass on true cards {hit:.2f} · TV distance {'n/a' if tv != tv else f'{tv:.2f}'} · distinct decoded {len(counts)}"
-                 f" · mean NN dist {mean_d:.2f}" if len(z) else "no samples")
-        bx.set_title(f"decoded top-{top_k} vs truth (bold = true card)\n{stats}", fontsize=9.5, loc="left")
+        summary = (f"mass on true cards {hit:.2f} · TV distance {'n/a' if tv != tv else f'{tv:.2f}'} · distinct decoded {len(counts)}"
+                   f" · mean NN dist {mean_d:.2f}" if len(z) else "no samples")
+        bx.set_title(f"decoded top-{top_k} vs truth (bold = true card)\n{summary}", fontsize=9.5, loc="left")
 
-    fig.savefig(path, dpi=dpi)
-    plt.close(fig)
-    return path
+    return fig, stats
 
 
 def render_decision(decision: dump.Decision, path_prefix: str | Path, samples=None, action_probs=None,

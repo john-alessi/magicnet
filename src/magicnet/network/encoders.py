@@ -30,7 +30,13 @@ class DecisionEncoder(torch.nn.Module):
                 edge_emb, edge_pairs = self.relation_encoder(game_state['action_edges'])
             else:
                 edge_emb, edge_pairs = None, None
-            batches, mask = batch_tokens(tokens, game_state['decode_batch_indices'], game_state['decode_batch_dim'])
+            #batches, mask = batch_tokens(tokens, game_state['decode_batch_indices'], game_state['decode_batch_dim'], game_state['decode_batch_start_indices'])
+            order = game_state['decode_batch_info']['order']
+            indices = game_state['decode_batch_info']['indices']
+            positions = game_state['decode_batch_info']['positions']
+            batches = tokens.new_zeros(game_state['decode_batch_info']['dim'])
+            batches[indices[order], positions] = tokens[order]
+            mask = game_state['decode_batch_info']['mask']
             for attn in self.transformer_blocks:
                 batches = attn(batches, mask, policy_state, policy_mask, edge_emb, edge_pairs)
         
@@ -66,7 +72,12 @@ class GameStateEncoder(torch.nn.Module):
                 hidden_card_component_key),
         ), dim=0)
         edge_emb, edge_pairs = self.relation_encoder(game_state['edges'])
-        batches, mask = batch_tokens(tokens, game_state['batch_indices'], game_state['batch_dim'])
+        order = game_state['encode_batch_info']['order']
+        indices = game_state['encode_batch_info']['indices']
+        positions = game_state['encode_batch_info']['positions']
+        batches = tokens.new_zeros(game_state['encode_batch_info']['dim'])
+        batches[indices[order], positions] = tokens[order]
+        mask = game_state['encode_batch_info']['mask']
         for attn in self.transformer_blocks:
             batches = attn(batches, mask, edge_emb, edge_pairs)
         return batches, mask
@@ -101,6 +112,12 @@ class ComponentSetEncoder(torch.nn.Module):
         self.component_encoder = ObjectComponentEncoder()
         self.mana_cost_encoder = ManaCostEncoder()
         self.attn = PooledAttention(in_dim=COMPONENT_DIM, out_dim=TOKEN_DIM)
+        self.register_buffer('vector_kind_raw_emb', torch.tensor(COMPONENT_KIND_INDEX['vector']))
+        self.register_buffer('scalar_kind_raw_emb', torch.tensor(COMPONENT_KIND_INDEX['scalar']))
+        self.register_buffer('color_kind_raw_emb', torch.tensor(COMPONENT_KIND_INDEX['color']))
+        self.register_buffer('flag_kind_raw_emb', torch.tensor(COMPONENT_KIND_INDEX['flag']))
+        self.register_buffer('categorical_kind_raw_emb', torch.tensor(COMPONENT_KIND_INDEX['categorical']))
+        self.register_buffer('mana_cost_kind_raw_emb', torch.tensor(COMPONENT_KIND_INDEX['mana_cost']))
 
     def forward(
         self,
@@ -119,7 +136,7 @@ class ComponentSetEncoder(torch.nn.Module):
                     (
                         hidden_card_component_key.unsqueeze(0).expand(hidden_card_tokens.shape[0]*hidden_card_tokens.shape[1], -1), # key
                         self.vector_encoder(hidden_card_tokens.flatten(0,1)), # value
-                        self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['vector'])).unsqueeze(0).expand(hidden_card_tokens.shape[0]*hidden_card_tokens.shape[1], -1), # kind
+                        self.component_kind_emb(self.vector_kind_raw_emb).unsqueeze(0).expand(hidden_card_tokens.shape[0]*hidden_card_tokens.shape[1], -1), # kind
                     )
                     , dim=-1
                 )
@@ -131,7 +148,7 @@ class ComponentSetEncoder(torch.nn.Module):
                     (
                         self.key_encoder(game_state['vectors'][:,0], emb_cache), # key
                         self.vector_encoder(game_state['vectors'][:,1], emb_cache), # value
-                        self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['vector'])).unsqueeze(0).expand(game_state['vectors'].shape[0], -1), # kind
+                        self.component_kind_emb(self.vector_kind_raw_emb).unsqueeze(0).expand(game_state['vectors'].shape[0], -1), # kind
                     )
                     , dim=-1
                 )
@@ -144,7 +161,7 @@ class ComponentSetEncoder(torch.nn.Module):
                     (
                         self.key_encoder(game_state['scalars'][:,0], emb_cache), # key
                         self.scalar_encoder(game_state['scalars'][:,1]), # value
-                        self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['scalar'])).unsqueeze(0).expand(game_state['scalars'].shape[0], -1), # kind
+                        self.component_kind_emb(self.scalar_kind_raw_emb).unsqueeze(0).expand(game_state['scalars'].shape[0], -1), # kind
                     )
                     , dim=-1
                 )
@@ -157,7 +174,7 @@ class ComponentSetEncoder(torch.nn.Module):
                     (
                         self.key_encoder(game_state['colors'][:,0], emb_cache), # key
                         self.color_encoder(game_state['colors'][:,1:1+len(COLOR_WHEEL)]), # value
-                        self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['color'])).unsqueeze(0).expand(game_state['colors'].shape[0], -1), # kind
+                        self.component_kind_emb(self.color_kind_raw_emb).unsqueeze(0).expand(game_state['colors'].shape[0], -1), # kind
                     )
                     , dim=-1
                 )
@@ -169,8 +186,8 @@ class ComponentSetEncoder(torch.nn.Module):
                 torch.cat(
                     (
                         self.key_encoder(game_state['flags'][:,0], emb_cache), # key
-                        torch.zeros(game_state['flags'].shape[0], COMPONENT_DIM), # value
-                        self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['flag'])).unsqueeze(0).expand(game_state['flags'].shape[0], -1), # kind
+                        game_state['flags'].new_zeros(game_state['flags'].shape[0], COMPONENT_DIM), # value
+                        self.component_kind_emb(self.flag_kind_raw_emb).unsqueeze(0).expand(game_state['flags'].shape[0], -1), # kind
                     )
                     , dim=-1
                 )
@@ -182,8 +199,8 @@ class ComponentSetEncoder(torch.nn.Module):
                 torch.cat(
                     (
                         self.key_encoder(game_state['categoricals'][:,0], emb_cache), # key
-                        self.categorical_encoder(game_state['categoricals'][:,1:3]), # value
-                        self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['categorical'])).unsqueeze(0).expand(game_state['categoricals'].shape[0], -1), # kind
+                        self.categorical_encoder(game_state['categoricals'][:,1]), # value
+                        self.component_kind_emb(self.categorical_kind_raw_emb).unsqueeze(0).expand(game_state['categoricals'].shape[0], -1), # kind
                     )
                     ,dim=-1
                 )
@@ -191,13 +208,13 @@ class ComponentSetEncoder(torch.nn.Module):
             indices_list.append(game_state['categoricals'][:,-1],)
 
         if (game_state['mana_costs'] is not None and game_state['mana_costs'].numel() > 0):
-            symbols = self.mana_cost_encoder(game_state['mana_costs'], game_state['num_mana_costs'])
+            symbols = self.mana_cost_encoder(game_state['mana_costs'], game_state['mana_cost_batch_info'])
             components_list.append(
                 torch.cat(
                     (
-                        self.mana_cost_key.unsqueeze(0).expand(game_state['num_mana_costs'], COMPONENT_DIM),
+                        self.mana_cost_key.unsqueeze(0).expand(game_state['mana_cost_batch_info']['dim'][0], COMPONENT_DIM),
                         symbols,
-                        self.component_kind_emb(torch.tensor(COMPONENT_KIND_INDEX['mana_cost'])).unsqueeze(0).expand(game_state['num_mana_costs'], -1),
+                        self.component_kind_emb(self.mana_cost_kind_raw_emb).unsqueeze(0).expand(game_state['mana_cost_batch_info']['dim'][0], -1),
                     )
                     ,dim=-1
                 )
@@ -207,7 +224,7 @@ class ComponentSetEncoder(torch.nn.Module):
         components_unordered = self.component_encoder(torch.cat(components_list, dim=0))
         indices_unordered = torch.cat(indices_list).to(torch.int32)
 
-        objects = self.attn(components_unordered, indices_unordered, game_state['num_tokens'])
+        objects = self.attn(components_unordered, game_state['component_batch_info'])
 
         return objects
 
@@ -229,17 +246,11 @@ class CategoricalEncoder(torch.nn.Module):
         self,
     ):
         super().__init__()
-        self.categorical_emb = torch.nn.ModuleList([
-            torch.nn.Embedding(len(n), COMPONENT_DIM)
-            for n in VOCABS.values()
-        ])
+        emb_dim = sum([len(v) for v in VOCABS.values()])
+        self.categorical_emb = torch.nn.Embedding(emb_dim, COMPONENT_DIM)
 
     def forward(self, x):
-        out = torch.zeros(*x.shape[:-1], COMPONENT_DIM)
-        for cat,emb in enumerate(self.categorical_emb):
-            idx = (x[...,-1] == cat)
-            out[idx] = emb(x[idx][:,0].to(torch.int32))
-        return out
+        return self.categorical_emb(x)
 
 class RawEmbeddingEncoder(torch.nn.Module):
     def __init__(
@@ -287,19 +298,13 @@ class ManaCostEncoder(torch.nn.Module):
         self,
     ):
         super().__init__()
-        self.pooled_attention = PooledAttention(in_dim=MANA_SYMBOL_DIM-1, out_dim=COMPONENT_DIM)
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(MANA_SYMBOL_DIM-2, COMPONENT_DIM),
+            torch.nn.GELU()
+        )
+        self.pooled_attention = PooledAttention(in_dim=COMPONENT_DIM, out_dim=COMPONENT_DIM)
 
-    def forward(self, mana_symbols: torch.Tensor, num_mana_costs: int):
-        costs = self.pooled_attention(mana_symbols[:,:-1], mana_symbols[:,-1].to(torch.int32), num_mana_costs)
+    def forward(self, mana_symbols: torch.Tensor, batch_info: dict):
+        a = self.mlp(mana_symbols[:,:-1])
+        costs = self.pooled_attention(a, batch_info)
         return costs
-
-def batch_tokens(tokens, batch_indices, batch_dim):
-    order = torch.argsort(batch_indices, stable=True)
-    counts = torch.bincount(batch_indices, minlength=batch_dim[0])
-    start_indices = torch.cumsum(counts, dim=0) - counts
-    positions = torch.arange(len(batch_indices)) - start_indices[batch_indices[order]]
-    padded = tokens.new_zeros(batch_dim)
-    padded[batch_indices[order], positions] = tokens[order]
-    mask = torch.ones(*batch_dim[:-1], dtype=torch.bool)
-    mask[batch_indices[order], positions] = False
-    return padded, mask

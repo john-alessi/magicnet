@@ -90,3 +90,24 @@ def test_nearest_decode_and_belief(tmp_path):
     assert set(counts) == hand
     out = viz.render_belief(d, samples, cmap, tmp_path / "belief.png")
     assert out.read_bytes()[:8] == PNG_MAGIC
+
+
+def test_log_belief_to_mlflow(tmp_path, monkeypatch):
+    mlflow = pytest.importorskip("mlflow")
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", f"sqlite:///{tmp_path / 'mlflow.db'}")
+    monkeypatch.chdir(tmp_path)  # default artifact root (./mlruns) stays inside tmp_path
+    d = _decision(3, 271)
+    cmap = _toy_map(d)
+    samples = viz.fake_belief(d, cmap, sigma=0.01, n=300)
+    with pytest.raises(RuntimeError):
+        viz.log_belief(d, samples, cmap, step=0)
+    with mlflow.start_run() as run:
+        stats = viz.log_belief(d, samples, cmap, step=1200)
+    client = mlflow.MlflowClient()
+    arts = [a.path for a in client.list_artifacts(run.info.run_id, "belief")]
+    assert arts == ["belief/step0001200_g3_d271.png"]
+    png = Path(client.download_artifacts(run.info.run_id, arts[0], str(tmp_path)))
+    assert png.read_bytes()[:8] == PNG_MAGIC
+    assert stats["r:opp_hand"]["mass_on_true"] == pytest.approx(1.0)
+    hist = client.get_metric_history(run.info.run_id, "belief/g3_d271/r_opp_hand/mass_on_true")
+    assert [(m.step, m.value) for m in hist] == [(1200, pytest.approx(1.0))]
